@@ -12,13 +12,17 @@ from .utils import generate_random_name
 from . import ui
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
-# oss-fuzz scripts fetched by scripts/setup-third-party.sh
+# oss-fuzz sparse checkout fetched by scripts/setup-third-party.sh
 THIRD_PARTY_OSS_FUZZ = Path(__file__).parent.parent.parent / "third_party" / "oss-fuzz"
 
-# Scripts sourced from oss-fuzz (fetched into third_party/oss-fuzz/).
+# Scripts sourced from oss-fuzz: dst_name → path relative to THIRD_PARTY_OSS_FUZZ
 OSS_FUZZ_SCRIPTS = {
-    "compile", "reproduce", "run_fuzzer",
-    "parse_options.py", "replay_build.sh", "make_build_replayable.py",
+    "compile": "infra/base-images/base-builder/compile",
+    "replay_build.sh": "infra/base-images/base-builder/replay_build.sh",
+    "make_build_replayable.py": "infra/base-images/base-builder/make_build_replayable.py",
+    "reproduce": "infra/base-images/base-runner/reproduce",
+    "run_fuzzer": "infra/base-images/base-runner/run_fuzzer",
+    "parse_options.py": "infra/base-images/base-runner/parse_options.py",
 }
 
 # Custom scripts from our templates directory.
@@ -266,7 +270,7 @@ class Target:
             return TEMPLATES_DIR / dst_name
 
         if dst_name in OSS_FUZZ_SCRIPTS:
-            candidate = THIRD_PARTY_OSS_FUZZ / dst_name
+            candidate = THIRD_PARTY_OSS_FUZZ / OSS_FUZZ_SCRIPTS[dst_name]
             if candidate.exists():
                 return candidate
         return None
