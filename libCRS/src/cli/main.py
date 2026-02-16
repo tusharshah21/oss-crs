@@ -223,6 +223,31 @@ def main():
         func=lambda args: print("\n".join(crs_utils.fetch(args.type, args.path)))
     )
 
+    # =========================================================================
+    # Patch build commands
+    # =========================================================================
+
+    apply_patch_build_parser = subparsers.add_parser(
+        "apply-patch-build",
+        help="Apply a patch to the snapshot image and rebuild",
+    )
+    apply_patch_build_parser.add_argument(
+        "patch_path", type=Path, help="Path to the unified diff file"
+    )
+    apply_patch_build_parser.add_argument(
+        "response_dir", type=Path, help="Directory to receive build results"
+    )
+    def _apply_patch_build(args):
+        exit_code = crs_utils.apply_patch_build(args.patch_path, args.response_dir)
+        print(exit_code)
+        sys.exit(exit_code)
+
+    apply_patch_build_parser.set_defaults(func=_apply_patch_build)
+
+    # =========================================================================
+    # Service discovery
+    # =========================================================================
+
     get_service_domain_parser = subparsers.add_parser(
         "get-service-domain",
         help="Get the service domain for accessing CRS services",

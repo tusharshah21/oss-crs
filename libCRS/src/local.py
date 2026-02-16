@@ -1,4 +1,5 @@
 import socket
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -74,3 +75,42 @@ class LocalCRSUtils(CRSUtils):
             raise RuntimeError(f"Service domain '{ret}' is not accessible: {e}")
 
         return ret
+
+    def apply_patch_build(self, patch_path: Path, response_dir: Path) -> int:
+        snapshot_image = get_env("OSS_CRS_SNAPSHOT_IMAGE")
+        if not snapshot_image:
+            raise RuntimeError("OSS_CRS_SNAPSHOT_IMAGE is not set")
+
+        # Verify snapshot image exists
+        result = subprocess.run(
+            ["docker", "image", "inspect", snapshot_image],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Snapshot image '{snapshot_image}' not found on Docker daemon"
+            )
+
+        # Set up request directory with the patch
+        request_dir = response_dir / "_request"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        response_dir.mkdir(parents=True, exist_ok=True)
+        rsync_copy(patch_path, request_dir / "patch.diff")
+
+        cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{request_dir}:/request:ro",
+            "-v", f"{response_dir}:/response:rw",
+            "--privileged",
+            "--shm-size=2g",
+            snapshot_image,
+            "/usr/local/bin/oss_crs_handler.sh", "/request", "/response",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+        build_exit_file = response_dir / "build_exit_code"
+        if build_exit_file.exists():
+            return int(build_exit_file.read_text().strip())
+
+        return result.returncode

@@ -3,7 +3,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from typing import TYPE_CHECKING, Optional
 import os
 import string
-import random
+import secrets
 import yaml
 
 RAND_CHARS = string.ascii_lowercase + string.digits
@@ -22,7 +22,7 @@ LIBCRS_PATH = (OSS_CRS_ROOT_PATH / "libCRS").resolve()
 
 def _generate_random_key(length: int = 10) -> str:
     """Generate a random alphanumeric string."""
-    return "".join(random.choice(RAND_CHARS) for _ in range(length))
+    return "".join(secrets.choice(RAND_CHARS) for _ in range(length))
 
 
 def render_template(template_path: Path, context: dict) -> str:
@@ -139,6 +139,7 @@ def render_run_crs_compose_docker_compose(
         "target_env": target.get_target_env(),
         "target": target,
         "oss_crs_infra_root_path": str(OSS_CRS_ROOT_PATH / "oss-crs-infra"),
+        "snapshot_image_tag": target.snapshot_image_tag or "",
     }
 
     llm_context = prepare_llm_context(tmp_docker_compose, crs_compose)

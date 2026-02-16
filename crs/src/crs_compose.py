@@ -75,6 +75,17 @@ class CRSCompose:
             return False
 
         tasks = []
+
+        # Create snapshot if incremental_build is enabled
+        if self.config.incremental_build:
+            sanitizer = target.get_target_env().get("sanitizer", "address")
+            tasks.append(
+                (
+                    "Create snapshot",
+                    lambda p, s=sanitizer: target.create_snapshot(s, p),
+                )
+            )
+
         for crs in self.crs_list:
             tasks.append(
                 (
@@ -99,6 +110,13 @@ class CRSCompose:
         if not self.__check_target_built(target):
             if not self.build_target(target):
                 return False
+
+        # Ensure snapshot_image_tag is set for the run phase, even if
+        # build_target() was skipped because the target was already built.
+        if self.config.incremental_build and target.snapshot_image_tag is None:
+            sanitizer = target.get_target_env().get("sanitizer", "address")
+            target.snapshot_image_tag = target.get_snapshot_image_name(sanitizer)
+
         return self.__run(target)
 
     def __validate_before_run(self, target: Target) -> bool:

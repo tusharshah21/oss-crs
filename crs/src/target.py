@@ -1,12 +1,17 @@
 from pathlib import Path
 from typing import Optional
 import hashlib
+import shutil
+import subprocess
 import tempfile
 import git
 
 from .config.target import TargetConfig
 from .ui import MultiTaskProgress, TaskResult
+from .utils import generate_random_name
 from . import ui
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 def extract_name_from_proj_path(proj_path: str) -> str:
@@ -35,6 +40,7 @@ class Target:
         self.repo_hash: Optional[str] = None
         self.no_checkout = no_checkout
         self.target_harness = target_harness
+        self.snapshot_image_tag: Optional[str] = None
 
     def get_docker_image_name(self) -> str:
         repo_hash = self.__get_repo_hash()
@@ -243,3 +249,119 @@ class Target:
             ret["harness"] = self.target_harness
 
         return ret
+
+    def get_snapshot_image_name(self, sanitizer: str) -> str:
+        repo_hash = self.__get_repo_hash()
+        return f"{self.name}:{repo_hash}-{sanitizer}-snapshot"
+
+    def create_snapshot(
+        self, sanitizer: str, progress: MultiTaskProgress
+    ) -> TaskResult:
+        snapshot_tag = self.get_snapshot_image_name(sanitizer)
+        target_base_image = self.get_docker_image_name()
+        cache_file = self.work_dir / f".snapshot-{sanitizer}.cache"
+
+        # Check cache: skip if snapshot already exists with matching base image hash
+        base_image_hash = self._get_base_image_hash(target_base_image)
+        if cache_file.exists() and base_image_hash:
+            cached_hash = cache_file.read_text().strip()
+            if cached_hash == base_image_hash:
+                # Verify the snapshot image still exists
+                check_result = subprocess.run(
+                    ["docker", "image", "inspect", snapshot_tag],
+                    capture_output=True, text=True,
+                )
+                if check_result.returncode == 0:
+                    self.snapshot_image_tag = snapshot_tag
+                    return TaskResult(
+                        success=True,
+                        output=f"Snapshot {snapshot_tag} already exists (cached)",
+                    )
+
+        container_name = f"{self.name}-snapshot-{sanitizer}-{generate_random_name(8)}"
+
+        # Clean and create output directory (exclude fuzzer binaries from snapshot)
+        out_dir = self.work_dir / f"snapshot-out-{sanitizer}"
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        target_env = self.get_target_env()
+
+        try:
+            # Step 1: Run the container (no --rm) to compile the project
+            run_cmd = [
+                "docker", "run",
+                f"--name={container_name}",
+                f"--env=SANITIZER={sanitizer}",
+                f"--env=FUZZING_ENGINE={target_env.get('engine', 'libfuzzer')}",
+                f"--env=ARCHITECTURE={target_env.get('architecture', 'x86_64')}",
+                f"--env=FUZZING_LANGUAGE={target_env.get('language', 'c')}",
+                f"--env=PROJECT_NAME={self.name}",
+                f"-v={out_dir}:/out",
+                "--privileged",
+                "--shm-size=2g",
+                target_base_image,
+                "bash", "-c", "compile && cp -n /usr/local/bin/replay_build.sh $SRC/",
+            ]
+            result = progress.run_command_with_streaming_output(
+                cmd=run_cmd,
+                cwd=self.work_dir,
+                info_text=f"Compiling {self.name} for snapshot",
+            )
+            if not result.success:
+                return result
+
+            # Step 2: Copy the default handler script into the container
+            handler_src = TEMPLATES_DIR / "default_handler.sh"
+            cp_cmd = [
+                "docker", "cp",
+                str(handler_src),
+                f"{container_name}:/usr/local/bin/oss_crs_handler.sh",
+            ]
+            result = progress.run_command_with_streaming_output(
+                cmd=cp_cmd,
+                cwd=self.work_dir,
+                info_text="Copying handler script into container",
+            )
+            if not result.success:
+                return result
+
+            # Step 3: Commit the container as snapshot image
+            commit_cmd = [
+                "docker", "commit",
+                "-c", "ENV REPLAY_ENABLED=1",
+                container_name,
+                snapshot_tag,
+            ]
+            result = progress.run_command_with_streaming_output(
+                cmd=commit_cmd,
+                cwd=self.work_dir,
+                info_text=f"Committing snapshot as {snapshot_tag}",
+            )
+            if not result.success:
+                return result
+
+            # Update cache
+            if base_image_hash:
+                cache_file.write_text(base_image_hash)
+
+            self.snapshot_image_tag = snapshot_tag
+            return TaskResult(success=True, output=f"Snapshot created: {snapshot_tag}")
+        finally:
+            # Always clean up the container
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True, text=True,
+            )
+
+    @staticmethod
+    def _get_base_image_hash(image_tag: str) -> Optional[str]:
+        """Get the content hash (image ID) of a Docker image."""
+        result = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image_tag],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return None

@@ -68,4 +68,16 @@ class CRSUtils(ABC):
         """Get the service domain for accessing CRS services."""
         pass
 
-    # TODO: Add more utility methods as needed
+    @abstractmethod
+    def apply_patch_build(self, patch_path: Path, response_dir: Path) -> int:
+        """Apply a patch to the snapshot image and rebuild.
+
+        Args:
+            patch_path: Path to a unified diff file.
+            response_dir: Directory to receive build results
+                (build_exit_code, build.log, out/).
+
+        Returns:
+            Build exit code (0 = success).
+        """
+        pass
