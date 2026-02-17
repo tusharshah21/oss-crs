@@ -1,3 +1,41 @@
+# Framework builder CRS — used as a separate compose entry for backward compatibility.
+#
+# NEW: CRS developers should declare builder support in their OWN crs.yaml:
+#
+#   target_build_phase:
+#     builds:
+#       - name: default-build
+#         dockerfile: builder.Dockerfile
+#         outputs: [build, src]
+#       - name: inc-builder-asan          # snapshot build, framework default
+#         snapshot: true
+#         dockerfile: oss-crs-infra:default-builder
+#         additional_env:
+#           SANITIZER: address
+#       - name: inc-builder-ubsan         # multiple sanitizers = multiple builds
+#         snapshot: true
+#         dockerfile: oss-crs-infra:default-builder
+#         additional_env:
+#           SANITIZER: undefined
+#
+#   crs_run_phase:
+#     patcher:
+#       dockerfile: patcher.Dockerfile
+#     inc-builder-asan:                   # same name links to build phase
+#       use_snapshot: true
+#       dockerfile: oss-crs-infra:default-builder  # explicit framework module
+#     inc-builder-ubsan:
+#       use_snapshot: true
+#       dockerfile: oss-crs-infra:default-builder
+#
+#   For custom builder sidecar:
+#     inc-builder-asan:
+#       use_snapshot: true
+#       dockerfile: custom-sidecar.Dockerfile  # CRS developer's own code
+#
+# The builder sidecar shares resources with the parent CRS — no separate
+# compose entry needed. Behavior is configured via additional_env.
+
 name: oss-crs-builder
 type:
   - builder
