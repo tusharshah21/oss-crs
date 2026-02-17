@@ -75,6 +75,7 @@ All submission and fetching operations work with one of the following data types
 | `seed` | Fuzzing seed inputs |
 | `bug-candidate` | Potential bug reports for verification |
 | `patch` | Patches to fix discovered bugs |
+| `diff` | Reference diffs for delta-mode analysis |
 
 ## CLI Reference
 
@@ -195,9 +196,9 @@ $ libCRS register-shared-dir /shared-corpus corpus
 $ libCRS register-shared-dir /shared-corpus corpus
 ```
 
-#### `register-fetch-dir` 📝 *(Registered in CLI, not yet implemented)*
+#### `register-fetch-dir` ✅
 
-Register a directory to automatically fetch shared data from other CRSs via oss-crs-infra. The command is registered in the CLI but raises `NotImplementedError` at runtime.
+Register a local directory as a symlink to the FETCH_DIR subdirectory for a given data type. The framework populates `OSS_CRS_FETCH_DIR/<type>/` with files before the CRS starts, so the symlink gives the CRS transparent access to fetched data.
 
 ```bash
 $ libCRS register-fetch-dir [--log <log_path>] <type> <path>
@@ -205,15 +206,22 @@ $ libCRS register-fetch-dir [--log <log_path>] <type> <path>
 
 | Argument | Description |
 |---|---|
-| `type` | Data type: `pov`, `seed`, or `bug-candidate` |
-| `path` | Local directory to receive shared data |
-| `--log` | *(Optional)* Log file path for the daemon |
+| `type` | Data type: `pov`, `seed`, `bug-candidate`, `patch`, or `diff` |
+| `path` | Local directory path (must not already exist — will be created as a symlink) |
+| `--log` | *(Optional)* Log file path |
+
+**How it works:** Creates a symlink `<path>` → `$OSS_CRS_FETCH_DIR/<type>/`. The `OSS_CRS_FETCH_DIR` environment variable is set by the framework.
 
 **Example:**
 ```bash
-$ libCRS register-fetch-dir seed /shared-seeds
 $ libCRS register-fetch-dir pov /shared-povs
-$ libCRS register-fetch-dir bug-candidate /shared-bug-candidates
+# /shared-povs → $OSS_CRS_FETCH_DIR/pov/
+
+$ libCRS register-fetch-dir diff /shared-diffs
+# /shared-diffs → $OSS_CRS_FETCH_DIR/diff/
+
+$ libCRS register-fetch-dir seed /shared-seeds
+# /shared-seeds → $OSS_CRS_FETCH_DIR/seed/
 ```
 
 ---
@@ -432,7 +440,7 @@ libCRS submit patch /tmp/patch.diff
 | `register-shared-dir` | ✅ Implemented | Symlink-based sharing |
 | `submit` | ✅ Implemented | Single-file submission |
 | `get-service-domain` | ✅ Implemented | DNS-verified domain resolution |
-| `register-fetch-dir` | 📝 Planned | Registered in CLI, raises NotImplementedError |
+| `register-fetch-dir` | ✅ Implemented | Symlink-based fetching (path → FETCH_DIR/type/) |
 | `fetch` | 📝 Planned | Registered in CLI, not yet implemented |
 | `apply-patch-build` | ✅ Implemented | Sends patch to builder sidecar `/build` endpoint |
 | `run-pov` | ✅ Implemented | Sends PoV to builder sidecar `/run-pov` endpoint |

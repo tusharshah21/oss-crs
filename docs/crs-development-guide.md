@@ -321,8 +321,11 @@ libCRS download-build-output <src_path> <dst_path>
 libCRS skip-build-output <dst_path>
 
 # Automatic directory submission (runs as daemon)
-libCRS register-submit-dir <type> <path>      # type: pov, seed, bug-candidate
+libCRS register-submit-dir <type> <path>      # type: pov, seed, bug-candidate, patch
 libCRS register-shared-dir <local_path> <shared_path>
+
+# Fetch directory registration (symlink to FETCH_DIR/<type>/)
+libCRS register-fetch-dir <type> <path>       # type: pov, seed, diff, bug-candidate
 
 # Manual submission
 libCRS submit <type> <file_path>
@@ -383,6 +386,15 @@ uv run crs-compose run \
   --compose-file ./my-crs-compose.yaml \
   --target-proj-path ~/oss-fuzz/projects/libxml2 \
   --target-harness xml
+
+# Optional: pass POVs, diffs, or corpus files to CRS containers
+uv run crs-compose run \
+  --compose-file ./my-crs-compose.yaml \
+  --target-proj-path ~/oss-fuzz/projects/libxml2 \
+  --target-harness xml \
+  --pov-dir ./povs \
+  --diff ./ref.diff \
+  --corpus ./seeds
 ```
 
 ### Debugging Tips
@@ -692,6 +704,42 @@ For each submitted file `<name>`, you can optionally create a `.<name>.metadata`
 ```
 
 This attributes the artifact to the component that found it.
+
+---
+
+## Fetching Data
+
+The framework can pass data into CRS containers via `crs-compose run` flags. Inside your CRS, use `libCRS register-fetch-dir` to access the data.
+
+### How It Works
+
+1. The operator passes data via `crs-compose run`:
+   - `--pov <file>` or `--pov-dir <dir>` — PoV files → `FETCH_DIR/pov/`
+   - `--diff <file>` — Reference diff → `FETCH_DIR/diff/ref.diff`
+   - `--corpus <dir>` — Seed corpus files → `FETCH_DIR/seed/`
+
+2. Inside the CRS container, register a local directory to access the data:
+   ```bash
+   libCRS register-fetch-dir pov /my-povs
+   # /my-povs is now a symlink to $OSS_CRS_FETCH_DIR/pov/
+
+   libCRS register-fetch-dir diff /my-diffs
+   # /my-diffs is now a symlink to $OSS_CRS_FETCH_DIR/diff/
+   ```
+
+3. Read files from the symlinked directory as normal:
+   ```bash
+   ls /my-povs/           # Lists all POV files
+   cat /my-diffs/ref.diff  # Read the reference diff
+   ```
+
+### Available Data Types
+
+| CLI Flag | Data Type | FETCH_DIR Subdirectory |
+|---|---|---|
+| `--pov`, `--pov-dir` | `pov` | `FETCH_DIR/pov/` |
+| `--diff` | `diff` | `FETCH_DIR/diff/` |
+| `--corpus` | `seed` | `FETCH_DIR/seed/` |
 
 ---
 

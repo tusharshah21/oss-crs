@@ -146,15 +146,14 @@ $ libCRS submit bug-candidate <bug_candidate_file_path>
 $ libCRS register-shared-dir <local_dir_path> <shared_fs_path>
 ```
 
-#### 📝 Fetching Functions (TODO)
+#### ✅ Fetching Functions
 ```
+# Register a local dir as symlink to FETCH_DIR/<type>/
 $ libCRS register-fetch-dir pov /shared-povs
+$ libCRS register-fetch-dir diff /shared-diffs
 $ libCRS register-fetch-dir seed /shared-seeds
-$ libCRS register-fetch-dir bug-candidate /shared-bug-candidates
 
-$ libCRS fetch pov <dst_dir_path> # return a list of file names
-$ libCRS fetch seed <dst_dir_path>
-$ libCRS fetch bug-candidate <dst_dir_path>
+# Populated by crs-compose via --pov/--pov-dir, --diff, --corpus flags
 ```
 
 #### 📝Patching Functions (TODO)
