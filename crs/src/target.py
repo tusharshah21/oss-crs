@@ -62,11 +62,25 @@ class Target:
         repo_hash = self.__get_repo_hash()
         return f"{self.name}:{repo_hash}"
 
-    def build_docker_image(self) -> str:
+    def __image_exists(self, image_tag: str) -> bool:
+        """Check if a Docker image with the given tag exists locally."""
+        import subprocess
+        result = subprocess.run(
+            ["docker", "image", "inspect", image_tag],
+            capture_output=True,
+        )
+        return result.returncode == 0
+
+    def build_docker_image(self) -> str | None:
         if not self.init_repo():
             return None
         repo_hash = self.__get_repo_hash()
         image_tag = self.get_docker_image_name()
+
+        # Skip build if image already exists
+        if self.__image_exists(image_tag):
+            print(f"Image {image_tag} already exists, skipping build.")
+            return image_tag
 
         tasks = [
             (

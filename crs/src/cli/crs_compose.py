@@ -2,11 +2,14 @@ import sys
 import time
 import signal
 import argparse
+import datetime
 from pathlib import Path
 from dotenv import load_dotenv
+import questionary
 from ..crs_compose import CRSCompose
 from ..target import Target
 from ..utils import generate_run_id, normalize_run_id
+from ..config.artifacts import ArtifactsOutput, CRSArtifacts
 
 
 DEFAULT_WORK_DIR = (Path(__file__) / "../../../../.oss-crs-workdir").resolve()
@@ -71,10 +74,10 @@ def add_build_target_command(subparsers):
     add_common_arguments(build_target)
     add_target_arguments(build_target)
     build_target.add_argument(
-        "--run-id",
+        "--build-id",
         type=str,
-        default=None,
-        help="Run identifier used to isolate parallel builds (default: random).",
+        default="default",
+        help="Build identifier used to isolate parallel builds (default: 'default').",
     )
 
 
@@ -97,10 +100,44 @@ def add_run_command(subparsers):
         help="Maximum run duration in seconds. Gracefully stops all containers when exceeded.",
     )
     run.add_argument(
+        "--build-id",
+        type=str,
+        default="default",
+        help="Build identifier to use (default: 'default').",
+    )
+    run.add_argument(
         "--run-id",
         type=str,
         default=None,
-        help="Run identifier used to isolate parallel runs (default: random).",
+        help="Run identifier for this run's artifacts. If not provided, generates timestamp-based id.",
+    )
+
+
+def add_artifacts_command(subparsers):
+    artifacts = subparsers.add_parser(
+        "artifacts", help="Show directories for run artifacts (JSON output)"
+    )
+    add_common_arguments(artifacts)
+    add_target_arguments(artifacts)
+    artifacts.add_argument(
+        "--target-harness",
+        type=str,
+        required=False,
+        default=None,
+        help="Specify the target harness (required for submit/fetch/shared dirs)",
+    )
+    artifacts.add_argument(
+        "--build-id",
+        type=str,
+        default="default",
+        help="Build identifier (default: 'default').",
+    )
+    artifacts.add_argument(
+        "--run-id",
+        type=str,
+        required=False,
+        default=None,
+        help="Run identifier to look up artifacts for (interactive selection if omitted)",
     )
 
 
@@ -117,6 +154,102 @@ def init_target_from_args(args) -> Target:
         args.no_checkout,
         target_harness,
     )
+
+
+def _collect_run_ids_for_target(crs_compose, target, harness: str | None) -> list[str]:
+    """Collect all run-ids for a target from SUBMIT_DIR (run artifacts)."""
+    import re
+    target_base_image = target.get_docker_image_name()
+    target_key = target_base_image.replace(":", "_")
+    seen = set()
+
+    for crs in crs_compose.crs_list:
+        if harness:
+            submit_base = crs.work_dir / target_key / "SUBMIT_DIR" / harness
+        else:
+            submit_base = crs.work_dir / target_key / "SUBMIT_DIR"
+        if not submit_base.exists():
+            continue
+        for run_dir in submit_base.iterdir():
+            if run_dir.is_dir():
+                seen.add(run_dir.name)
+
+    # Sort by timestamp (extract 10-digit sequences), newest first
+    def extract_ts(run_id: str) -> int:
+        match = re.search(r'\d{10}', run_id)
+        return int(match.group()) if match else 0
+
+    return sorted(seen, key=extract_ts, reverse=True)
+
+
+def _format_run_id(run_id: str) -> str:
+    """Format a run-id for display. Extract unix timestamp and show human-readable time."""
+    import re
+    match = re.search(r'\d{10}', run_id)
+    if match:
+        ts = int(match.group())
+        dt = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        return f"{dt}  ({run_id})"
+    return run_id
+
+
+def _select_run_id_interactively(crs_compose, target, harness: str | None) -> str | None:
+    """Prompt user to select a run-id from available runs."""
+    all_run_ids = _collect_run_ids_for_target(crs_compose, target, harness)
+    if not all_run_ids:
+        print("No runs found for this target.", file=sys.stderr)
+        return None
+
+    choices = [questionary.Choice(title=_format_run_id(r), value=r) for r in all_run_ids]
+    selected = questionary.select("Select run-id:", choices=choices).ask()
+    return selected
+
+
+def _handle_artifacts(args, crs_compose) -> bool:
+    target = init_target_from_args(args)
+    harness = target.target_harness
+
+    # build_id for BUILD_OUT_DIR (default: "default")
+    build_id = normalize_run_id(args.build_id)
+
+    # run_id for SUBMIT/FETCH/SHARED dirs - interactive selection if not provided
+    if args.run_id:
+        run_id = normalize_run_id(args.run_id)
+    else:
+        run_id = _select_run_id_interactively(crs_compose, target, harness)
+        if run_id is None:
+            return False
+
+    # Build structured result
+    output = ArtifactsOutput(build_id=build_id, run_id=run_id)
+
+    for crs in crs_compose.crs_list:
+        # Build output uses build_id
+        build_path = crs.get_build_output_dir(target, build_id=build_id)
+
+        crs_artifacts = CRSArtifacts(
+            build=str(build_path) if build_path.exists() else None
+        )
+
+        # Per-harness artifacts use run_id
+        if harness:
+            submit_path = crs.get_submit_dir(target, run_id=run_id)
+            if submit_path.exists():
+                pov_path = submit_path / "pov"
+                seed_path = submit_path / "seed"
+                crs_artifacts.pov = str(pov_path) if pov_path.exists() else None
+                crs_artifacts.seed = str(seed_path) if seed_path.exists() else None
+
+            fetch_path = crs.get_fetch_dir(target, run_id=run_id)
+            crs_artifacts.fetch = str(fetch_path) if fetch_path.exists() else None
+
+            shared_path = crs.get_shared_dir(target, run_id=run_id)
+            crs_artifacts.shared = str(shared_path) if shared_path.exists() else None
+
+        output.crs[crs.name] = crs_artifacts
+
+    print(output.to_json())
+    return True
 
 
 def _sigterm_handler(signum, frame):
@@ -136,6 +269,7 @@ def cli() -> bool:
     add_prepare_command(subparsers)
     add_build_target_command(subparsers)
     add_run_command(subparsers)
+    add_artifacts_command(subparsers)
     add_check_command(subparsers)
 
     args = parser.parse_args()
@@ -146,29 +280,30 @@ def cli() -> bool:
         if isinstance(value, Path):
             setattr(args, key, value.expanduser().resolve())
 
-    resolved_run_id = None
-    if hasattr(args, "run_id"):
-        resolved_run_id = (
-            normalize_run_id(args.run_id) if args.run_id else generate_run_id()
-        )
-
-    crs_compose = CRSCompose.from_yaml_file(args.compose_file, args.work_dir)
+    # Skip CRS repo init for commands that don't need it
+    skip_crs_init = args.command == "artifacts"
+    crs_compose = CRSCompose.from_yaml_file(args.compose_file, args.work_dir, skip_crs_init=skip_crs_init)
 
     if args.command == "prepare":
         if not crs_compose.prepare(publish=args.publish):
             return False
     elif args.command == "build-target":
-        assert resolved_run_id is not None
         target = init_target_from_args(args)
-        if not crs_compose.build_target(target, run_id=resolved_run_id):
+        build_id = normalize_run_id(args.build_id)
+        if not crs_compose.build_target(target, build_id=build_id):
             return False
     elif args.command == "run":
-        assert resolved_run_id is not None
         target = init_target_from_args(args)
         if args.timeout is not None:
             crs_compose.set_deadline(time.monotonic() + args.timeout)
-        if not crs_compose.run(target, run_id=resolved_run_id):
+
+        build_id = normalize_run_id(args.build_id)
+        run_id = normalize_run_id(args.run_id) if args.run_id else generate_run_id()
+        print(f"Using build-id: {build_id}, run-id: {run_id}")
+        if not crs_compose.run(target, run_id=run_id, build_id=build_id):
             return False
+    elif args.command == "artifacts":
+        return _handle_artifacts(args, crs_compose)
     elif args.command == "check":
         pass
     return True

@@ -11,11 +11,11 @@ from .utils import TmpDockerCompose
 
 class CRSCompose:
     @classmethod
-    def from_yaml_file(cls, compose_file: Path, work_dir: Path) -> "CRSCompose":
+    def from_yaml_file(cls, compose_file: Path, work_dir: Path, skip_crs_init: bool = False) -> "CRSCompose":
         config = CRSComposeConfig.from_yaml_file(compose_file)
-        return cls(config, work_dir)
+        return cls(config, work_dir, skip_crs_init=skip_crs_init)
 
-    def __init__(self, config: CRSComposeConfig, work_dir: Path):
+    def __init__(self, config: CRSComposeConfig, work_dir: Path, skip_crs_init: bool = False):
         hash = config.md5_hash()
         self.config = config
         self.llm = LLM(self.config.llm_config)
@@ -24,7 +24,7 @@ class CRSCompose:
         self.crs_compose_env = CRSComposeEnv(self.config.run_env)
         self.crs_list = [
             CRS.from_crs_compose_entry(
-                name, crs_cfg, self.work_dir, self.crs_compose_env
+                name, crs_cfg, self.work_dir, self.crs_compose_env, skip_init=skip_crs_init
             )
             for name, crs_cfg in self.config.crs_entries.items()
         ]
@@ -32,6 +32,31 @@ class CRSCompose:
 
     def set_deadline(self, deadline: float) -> None:
         self.deadline = deadline
+
+    def get_latest_build_run_id(self, target: Target) -> str | None:
+        """Find the latest build run-id (by unix timestamp) for the given target."""
+        import re
+        target_base_image = target.get_docker_image_name()
+        target_key = target_base_image.replace(":", "_")
+        latest_run_id = None
+        latest_ts = 0
+
+        for crs in self.crs_list:
+            build_out_base = crs.work_dir / target_key / "BUILD_OUT_DIR"
+            if not build_out_base.exists():
+                continue
+            for run_dir in build_out_base.iterdir():
+                if not run_dir.is_dir():
+                    continue
+                run_id = run_dir.name
+                # Extract first 10-digit sequence (unix timestamp) from run_id
+                match = re.search(r'\d{10}', run_id)
+                if match:
+                    ts = int(match.group())
+                    if ts > latest_ts:
+                        latest_ts = ts
+                        latest_run_id = run_id
+        return latest_run_id
 
     def __prepare_oss_crs_infra(
         self, publish: bool = False, docker_registry: str = None
@@ -69,7 +94,7 @@ class CRSCompose:
 
         return True
 
-    def build_target(self, target: Target, run_id: str) -> bool:
+    def build_target(self, target: Target, build_id: str) -> bool:
         target_base_image = target.build_docker_image()
         if target_base_image is None:
             return False
@@ -80,7 +105,7 @@ class CRSCompose:
                 (
                     crs.name,
                     lambda progress, crs=crs: crs.build_target(
-                        target, target_base_image, progress, run_id
+                        target, target_base_image, progress, build_id
                     ),
                 )
             )
@@ -92,14 +117,30 @@ class CRSCompose:
 
         return True
 
-    def run(self, target: Target, run_id: str) -> bool:
+    def run(self, target: Target, run_id: str, build_id: str | None = None) -> bool:
+        """
+        Run the CRS compose.
+
+        Args:
+            target: The target to run.
+            run_id: Run identifier for this run (used for SUBMIT_DIR, FETCH_DIR, SHARED_DIR).
+            build_id: Build identifier (used for BUILD_OUT_DIR). If None, uses "default"
+                      and will trigger build if needed.
+        """
         if not self.__validate_before_run(target):
             return False
         target.init_repo()
-        if not self.__check_target_built(target, run_id):
-            if not self.build_target(target, run_id):
+
+        # If build_id not provided, use "default"
+        if build_id is None:
+            build_id = "default"
+
+        # Check if build exists, build if needed
+        if not self.__check_target_built(target, build_id):
+            if not self.build_target(target, build_id):
                 return False
-        return self.__run(target, run_id=run_id)
+
+        return self.__run(target, run_id=run_id, build_id=build_id)
 
     def __validate_before_run(self, target: Target) -> bool:
         tasks = [
@@ -120,7 +161,7 @@ class CRSCompose:
 
         return True
 
-    def __check_target_built(self, target: Target, run_id: str) -> bool:
+    def __check_target_built(self, target: Target, build_id: str) -> bool:
         target_base_image = target.get_docker_image_name()
         tasks = []
         for crs in self.crs_list:
@@ -128,7 +169,7 @@ class CRSCompose:
                 (
                     crs.name,
                     lambda progress, crs=crs: crs.is_target_built(
-                        target, target_base_image, progress, run_id
+                        target, target_base_image, progress, build_id
                     ),
                 )
             )
@@ -140,14 +181,14 @@ class CRSCompose:
 
         return True
 
-    def __run(self, target: Target, run_id: str) -> bool:
+    def __run(self, target: Target, run_id: str, build_id: str) -> bool:
         if self.crs_compose_env.run_env == RunEnv.LOCAL:
-            return self.__run_local(target, run_id=run_id)
+            return self.__run_local(target, run_id=run_id, build_id=build_id)
         else:
             print(f"TODO: Support run env {self.crs_compose_env.run_env}")
             return False
 
-    def __run_local(self, target: Target, run_id: str) -> bool:
+    def __run_local(self, target: Target, run_id: str, build_id: str) -> bool:
         with MultiTaskProgress(
             tasks=[],
             title="CRS Compose Run",
@@ -168,6 +209,7 @@ class CRSCompose:
                             target,
                             tmp_docker_compose,
                             actual_run_id,
+                            build_id,
                             progress,
                         ),
                     ),
@@ -200,6 +242,7 @@ class CRSCompose:
         target: Target,
         tmp_docker_compose: TmpDockerCompose,
         run_id: str,
+        build_id: str,
         progress: MultiTaskProgress,
     ) -> TaskResult:
         def prepare_docker_compose(progress: MultiTaskProgress) -> TaskResult:
@@ -209,6 +252,7 @@ class CRSCompose:
                 project_name,
                 target,
                 run_id,
+                build_id=build_id,
             )
             tmp_docker_compose.docker_compose.write_text(content)
             return TaskResult(success=True)

@@ -13,10 +13,14 @@ from .utils import TmpDockerCompose, rm_with_docker
 CRS_YAML_PATH = "oss-crs/crs.yaml"
 
 
-def init_crs_repo(name, repo_url: str, branch: str, dest_path: Path) -> bool:
+def init_crs_repo(name, repo_url: str, branch: str, dest_path: Path, skip_if_exists: bool = False) -> bool:
     # Use file lock to prevent race conditions when multiple runs access same CRS repo
     lock_path = dest_path.parent / f".{name}.lock"
     with file_lock(lock_path):
+        # Skip init if repo exists and skip_if_exists is True
+        if skip_if_exists and dest_path.exists():
+            return True
+
         tasks = []
         if dest_path.exists():
             tasks = [
@@ -60,6 +64,7 @@ class CRS:
         entry: CRSEntry,
         work_dir: Path,
         crs_compose_env: CRSComposeEnv,
+        skip_init: bool = False,
     ) -> "CRS":
         if entry.source.local_path:
             return cls(
@@ -67,7 +72,7 @@ class CRS:
             )
         else:
             path = work_dir / "../crs_src" / name
-            if init_crs_repo(name, entry.source.url, entry.source.ref, path):
+            if init_crs_repo(name, entry.source.url, entry.source.ref, path, skip_if_exists=skip_init):
                 return cls(name, path, work_dir, entry, crs_compose_env)
         raise ValueError(f"Failed to initialize CRS from entry: {name}")
 
@@ -175,7 +180,7 @@ class CRS:
         target: Target,
         target_base_image: str,
         progress: MultiTaskProgress,
-        run_id: str,
+        build_id: str,
     ) -> "TaskResult":
         if not self.__is_supported_target(target):
             # TODO: warn instead of error?
@@ -183,7 +188,7 @@ class CRS:
                 success=False,
                 error=f"Skipping target {target.name} for CRS {self.name} as it is not supported.",
             )
-        build_work_dir = self.work_dir / (target_base_image.replace(":", "_")) / run_id
+        build_work_dir = self.work_dir / (target_base_image.replace(":", "_")) / build_id
         for build_config in self.config.target_build_phase.builds:
             build_name = build_config.name
             progress.add_task(
@@ -195,7 +200,7 @@ class CRS:
                         build_name,
                         build_config,
                         build_work_dir,
-                        run_id,
+                        build_id,
                         p,
                     )
                 ),
@@ -207,14 +212,14 @@ class CRS:
         target: Target,
         target_base_image: str,
         progress: MultiTaskProgress,
-        run_id: str,
+        build_id: str,
     ) -> TaskResult:
         if not self.__is_supported_target(target):
             return TaskResult(
                 success=False,
                 error=f"Skipping target {target.name} for CRS {self.name} as it is not supported.",
             )
-        build_out_dir = self.get_build_output_dir(target, run_id=run_id)
+        build_out_dir = self.get_build_output_dir(target, build_id=build_id)
         for build_config in self.config.target_build_phase.builds:
             build_name = build_config.name
             progress.add_task(
@@ -246,8 +251,8 @@ class CRS:
         sub_work_dir.mkdir(parents=True, exist_ok=True)
         return sub_work_dir
 
-    def get_build_output_dir(self, target: Target, run_id: str | None = None) -> Path:
-        return self.__get_sub_work_dir(target, "BUILD_OUT_DIR", run_id=run_id)
+    def get_build_output_dir(self, target: Target, build_id: str | None = None) -> Path:
+        return self.__get_sub_work_dir(target, "BUILD_OUT_DIR", run_id=build_id)
 
     def get_submit_dir(self, target: Target, run_id: str | None = None) -> Path:
         return self.__get_sub_work_dir(
@@ -308,11 +313,11 @@ class CRS:
         build_name: str,
         build_config,
         build_work_dir: Path,
-        run_id: str,
+        build_id: str,
         progress: MultiTaskProgress,
     ) -> "TaskResult":
-        build_out_dir = self.get_build_output_dir(target, run_id=run_id)
-        build_cache_path = build_work_dir / f".{build_name}.cache"
+        build_out_dir = self.get_build_output_dir(target, build_id=build_id)
+        build_cache_path = build_out_dir / f".{build_name}.cache"
         docker_compose_output = ""
 
         def prepare_docker_compose_file(
@@ -324,7 +329,7 @@ class CRS:
                 target_base_image,
                 build_config,
                 build_out_dir,
-                run_id,
+                build_id,
             )
             tmp_docker_compose.docker_compose.write_text(rendered)
             return TaskResult(success=True)

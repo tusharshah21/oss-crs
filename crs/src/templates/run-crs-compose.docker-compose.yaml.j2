@@ -18,7 +18,7 @@ volumes:
 
 services:
 # crs.name can be different from name defined in crs.yaml; crs.name comes from crs-compose.yaml
-{% for crs in crs_list %} 
+{% for crs in crs_list %}
 {% for module_name, module_config in crs.config.crs_run_phase.modules.items() %}
   {{ crs.name }}_{{ module_name }}:
     privileged: true
@@ -71,7 +71,7 @@ services:
     # TODO: Check memory limit because it's for all services in a single CRS
     mem_limit: "{{ crs.resource.memory }}"
     volumes:
-      - {{ crs.get_build_output_dir(target, run_id) }}:/OSS_CRS_BUILD_OUT_DIR:ro
+      - {{ crs.get_build_output_dir(target, build_id) }}:/OSS_CRS_BUILD_OUT_DIR:ro
       - {{ crs.get_submit_dir(target, run_id) }}:/OSS_CRS_SUBMIT_DIR:rw
       - {{ crs.get_fetch_dir(target, run_id) }}:/OSS_CRS_FETCH_DIR:ro
       - {{ crs.get_shared_dir(target, run_id) }}:/OSS_CRS_SHARED_DIR:rw

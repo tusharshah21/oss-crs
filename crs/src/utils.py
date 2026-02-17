@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import random
 import string
+import time
 import re
 from pathlib import Path
 from typing import Optional
@@ -16,7 +17,10 @@ def generate_random_name(length: int = 10) -> str:
 
 
 def generate_run_id() -> str:
-    return generate_random_name(10)
+    """Generate a run ID from unix timestamp + 2 chars of randomness."""
+    ts = int(time.time())
+    suffix = "".join(random.choice(RAND_CHARS) for _ in range(2))
+    return f"{ts}{suffix}"
 
 
 def normalize_run_id(run_id: str) -> str:
