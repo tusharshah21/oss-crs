@@ -59,12 +59,8 @@ services:
       - OSS_CRS_SUBMIT_DIR=/OSS_CRS_SUBMIT_DIR
       - OSS_CRS_FETCH_DIR=/OSS_CRS_FETCH_DIR
       - OSS_CRS_SHARED_DIR=/OSS_CRS_SHARED_DIR
-{%- if crs.builder_url and not module_config.use_snapshot %}
+{%- if snapshot_image_tag and not module_config.use_snapshot and not crs.config.is_builder %}
       - OSS_CRS_SNAPSHOT_IMAGE={{ snapshot_image_tag }}
-      - OSS_CRS_BUILDER_URL={{ crs.builder_url }}
-{%- elif builder_url and not crs.config.is_builder %}
-      - OSS_CRS_SNAPSHOT_IMAGE={{ snapshot_image_tag }}
-      - OSS_CRS_BUILDER_URL={{ builder_url }}
 {%- endif %}
       ###########################################
 {%- for env_key, env_value in module_config.additional_env.items() %}

@@ -43,14 +43,6 @@ class CRSCompose:
         return None
 
     @property
-    def builder_url(self) -> str:
-        crs = self._builder_crs
-        if crs is None:
-            return ""
-        module_name = next(iter(crs.config.crs_run_phase.modules.keys()))
-        return f"http://{crs.name}_{module_name}:8080"
-
-    @property
     def _any_needs_snapshot(self) -> bool:
         """Check if any CRS needs a snapshot (new-style or old-style builder)."""
         return (
@@ -106,8 +98,8 @@ class CRSCompose:
 
         tasks = []
 
-        # Create snapshot(s) if incremental build is enabled and any CRS needs a snapshot
-        if self.config.incremental_build and self._any_needs_snapshot:
+        # Create snapshot(s) if any CRS needs a snapshot
+        if self._any_needs_snapshot:
             # Collect unique sanitizers from all snapshot builds across all CRSes
             snapshot_sanitizers: set[str] = set()
             default_sanitizer = self._get_sanitizer(target)
@@ -157,8 +149,8 @@ class CRSCompose:
         target.init_repo()
         need_build = not self.__check_target_built(target)
 
-        # Also check if snapshot image exists when incremental build is enabled
-        if not need_build and self.config.incremental_build and self._any_needs_snapshot:
+        # Also check if snapshot image exists when any CRS needs a snapshot
+        if not need_build and self._any_needs_snapshot:
             snapshot_tag = target.get_snapshot_image_name(self._get_sanitizer(target))
             check = subprocess.run(
                 ["docker", "image", "inspect", snapshot_tag],
@@ -173,7 +165,7 @@ class CRSCompose:
 
         # Ensure snapshot_image_tag is set for the run phase, even if
         # build_target() was skipped because the target was already built.
-        if self.config.incremental_build and self._any_needs_snapshot and target.snapshot_image_tag is None:
+        if self._any_needs_snapshot and target.snapshot_image_tag is None:
             target.snapshot_image_tag = target.get_snapshot_image_name(
                 self._get_sanitizer(target)
             )

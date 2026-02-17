@@ -83,29 +83,24 @@ class LocalCRSUtils(CRSUtils):
 
         return ret
 
-    _builder_healthy = False
+    _builders_healthy: dict[str, bool] = {}
 
-    def _get_builder_url(self) -> str:
-        url = get_env("OSS_CRS_BUILDER_URL", allow_none=True)
-        if not url:
-            raise RuntimeError(
-                "OSS_CRS_BUILDER_URL not set. "
-                "Add a builder CRS entry (type: builder) to crs-compose.yaml."
-            )
-        return url
+    def _get_builder_url(self, builder: str) -> str:
+        domain = self.get_service_domain(builder)
+        return f"http://{domain}:8080"
 
     def _wait_for_builder_health(
-        self, max_wait: int = 120, initial_interval: float = 1.0,
+        self, builder: str, max_wait: int = 120, initial_interval: float = 1.0,
     ) -> bool:
         """Poll GET /health until the builder sidecar is reachable.
 
         Uses exponential backoff (1s, 2s, 4s, ..., capped at 10s).
         Returns True when healthy, False if max_wait exceeded.
         """
-        if self._builder_healthy:
+        if self._builders_healthy.get(builder, False):
             return True
 
-        builder_url = self._get_builder_url()
+        builder_url = self._get_builder_url(builder)
         interval = initial_interval
         start = time.monotonic()
         while time.monotonic() - start < max_wait:
@@ -114,24 +109,25 @@ class LocalCRSUtils(CRSUtils):
                     f"{builder_url}/health", timeout=5,
                 )
                 if resp.status_code == 200:
-                    logger.info("Builder sidecar is healthy")
-                    self._builder_healthy = True
+                    logger.info("Builder sidecar '%s' is healthy", builder)
+                    self._builders_healthy[builder] = True
                     return True
             except (http_requests.ConnectionError, http_requests.Timeout):
                 pass
             elapsed = time.monotonic() - start
             logger.debug(
-                "Builder not ready (%.0fs elapsed), retrying in %.1fs...",
-                elapsed, interval,
+                "Builder '%s' not ready (%.0fs elapsed), retrying in %.1fs...",
+                builder, elapsed, interval,
             )
             time.sleep(interval)
             interval = min(interval * 2, 10.0)
 
-        logger.error("Builder sidecar not healthy after %ds", max_wait)
+        logger.error("Builder sidecar '%s' not healthy after %ds", builder, max_wait)
         return False
 
     def _submit_and_poll(
-        self, endpoint: str, files: dict | None = None,
+        self, endpoint: str, builder: str,
+        files: dict | None = None,
         data: dict | None = None,
         timeout: int = 600, poll_interval: int = 5,
     ) -> dict | None:
@@ -140,13 +136,13 @@ class LocalCRSUtils(CRSUtils):
         Waits for the builder to be healthy before submitting.
         Returns the result dict, or None on timeout/connection error.
         """
-        if not self._wait_for_builder_health():
+        if not self._wait_for_builder_health(builder):
             if files:
                 for f in files.values():
                     f.close()
             return None
 
-        builder_url = self._get_builder_url()
+        builder_url = self._get_builder_url(builder)
         try:
             resp = http_requests.post(
                 f"{builder_url}{endpoint}",
@@ -189,10 +185,11 @@ class LocalCRSUtils(CRSUtils):
         self,
         patch_path: Path,
         response_dir: Path,
+        builder: str,
     ) -> int:
         """Apply a patch and rebuild via the builder sidecar."""
         files = {"patch": open(patch_path, "rb")}
-        result = self._submit_and_poll("/build", files)
+        result = self._submit_and_poll("/build", builder, files)
 
         response_dir.mkdir(parents=True, exist_ok=True)
         if result is None:
@@ -215,11 +212,12 @@ class LocalCRSUtils(CRSUtils):
         harness_name: str,
         build_id: str,
         response_dir: Path,
+        builder: str,
     ) -> int:
         """Run a POV binary via the builder sidecar."""
         files = {"pov": open(pov_path, "rb")}
         data = {"harness_name": harness_name, "build_id": build_id}
-        result = self._submit_and_poll("/run-pov", files, data, timeout=180)
+        result = self._submit_and_poll("/run-pov", builder, files, data, timeout=180)
 
         response_dir.mkdir(parents=True, exist_ok=True)
         if result is None:
@@ -238,10 +236,11 @@ class LocalCRSUtils(CRSUtils):
         self,
         build_id: str,
         response_dir: Path,
+        builder: str,
     ) -> int:
         """Run the project's bundled test.sh via the builder sidecar."""
         data = {"build_id": build_id}
-        result = self._submit_and_poll("/run-test", data=data, timeout=600)
+        result = self._submit_and_poll("/run-test", builder, data=data, timeout=600)
 
         response_dir.mkdir(parents=True, exist_ok=True)
         if result is None:

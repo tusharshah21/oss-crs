@@ -194,14 +194,6 @@ class CRSConfig(BaseModel):
         """Check if this CRS has a run phase module that uses a snapshot."""
         return any(m.use_snapshot for m in self.crs_run_phase.modules.values())
 
-    @property
-    def builder_module_name(self) -> Optional[str]:
-        """Return the name of the first module that uses a snapshot, if any."""
-        for name, module in self.crs_run_phase.modules.items():
-            if module.use_snapshot:
-                return name
-        return None
-
     @field_validator("version")
     @classmethod
     def validate_version(cls, v: str) -> str:

@@ -159,7 +159,7 @@ $ libCRS fetch bug-candidate <dst_dir_path>
 
 #### 📝Patching Functions (TODO)
 ```
-$ libCRS apply-patch-build <patch diff file> <dst dir path>
+$ libCRS apply-patch-build <patch diff file> <dst dir path> --builder <module_name>
 ```
 
 #### ✅ Network Functions

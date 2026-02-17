@@ -84,18 +84,6 @@ class CRS:
         self.resource = resource
         self.crs_compose_env = crs_compose_env
 
-    @property
-    def builder_url(self) -> Optional[str]:
-        """URL for this CRS's builder module, if it has one.
-
-        Returns the Docker Compose service URL for the first module with
-        use_snapshot=True. Returns None if no builder module exists.
-        """
-        if not self.config.has_builder_module:
-            return None
-        module_name = self.config.builder_module_name
-        return f"http://{self.name}_{module_name}:8080"
-
     def prepare(
         self,
         publish: bool = False,

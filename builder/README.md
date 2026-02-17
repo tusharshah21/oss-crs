@@ -1,13 +1,96 @@
 # OSS-CRS Builder
 
-The **Builder CRS** provides snapshot-based incremental builds for patch-testing CRSs. Instead of rebuilding the entire target from scratch for each patch, the builder creates a Docker snapshot of the compiled project and applies patches incrementally on top of it.
+The **Builder** provides snapshot-based incremental builds for patch-testing CRSs. Instead of rebuilding the entire target from scratch for each patch, the builder creates a Docker snapshot of the compiled project and applies patches incrementally on top of it.
+
+> **Recommended approach:** Declare builder sidecars directly in your CRS's own `crs.yaml` using `snapshot: true` build steps and `use_snapshot: true` modules. This is simpler and does not require a separate compose entry. See the [New Pattern](#new-pattern-per-crs-builder-sidecar) section below.
 
 ## How It Works
 
-1. When a builder CRS is present in the compose file, the framework creates a **snapshot image** during the build phase. This snapshot contains the fully compiled target project.
-2. The builder service starts from the snapshot image and exposes an HTTP API for incremental builds.
-3. Other CRSs (e.g., a patcher) send patches to the builder via `libCRS.apply_patch_build()`, which calls the builder's `/build` endpoint.
+1. During the build phase, the framework creates a **snapshot image** — a Docker image of the fully compiled target project.
+2. At runtime, builder sidecar modules start from the snapshot image and expose an HTTP API for incremental builds.
+3. Other modules (e.g., a patcher) send patches to the builder via `libCRS apply-patch-build`, which calls the builder's `/build` endpoint.
 4. The builder applies the patch to the source tree, recompiles, and returns the result — much faster than a full rebuild.
+
+## New Pattern: Per-CRS Builder Sidecar
+
+Each CRS declares its own builder sidecars in `crs.yaml`. No separate compose entry is needed.
+
+### crs.yaml Example
+
+```yaml
+name: my-patcher-crs
+type:
+  - bug-fixing
+version: "1.0.0"
+docker_registry: "ghcr.io/my-org/my-patcher-crs"
+
+prepare_phase:
+  hcl: oss-crs/build.hcl
+
+target_build_phase:
+  - name: asan-snapshot
+    dockerfile: oss-crs-infra:default-builder
+    snapshot: true
+    additional_env:
+      SANITIZER: address
+
+crs_run_phase:
+  patcher:
+    dockerfile: oss-crs/docker-compose/patcher.Dockerfile
+  builder-asan:
+    dockerfile: oss-crs-infra:default-builder
+    use_snapshot: true
+
+supported_target:
+  mode:
+    - delta
+  language:
+    - c
+    - c++
+  sanitizer:
+    - address
+  architecture:
+    - x86_64
+```
+
+The framework automatically:
+- Creates a snapshot image during the build phase (for each `snapshot: true` build step)
+- Starts builder sidecar modules from the snapshot (for each `use_snapshot: true` module)
+- Sets `OSS_CRS_SNAPSHOT_IMAGE` on non-builder modules (e.g., patcher)
+- Exposes builder sidecars on the CRS's private Docker network
+
+Modules use the `--builder` flag on libCRS commands to specify which builder sidecar to communicate with (e.g., `libCRS apply-patch-build /tmp/fix.diff /tmp/out --builder builder-asan`).
+
+## Legacy Pattern (Backward Compatible)
+
+The legacy approach uses a separate `oss-crs-builder` CRS entry in the compose file. This is still supported but not recommended for new CRSs.
+
+### Compose File
+
+```yaml
+oss-crs-builder:
+  source:
+    local_path: /path/to/oss-crs/builder
+  cpuset: "2-3"
+  memory: "8G"
+```
+
+### CRS Configuration
+
+The builder's `crs.yaml` declares `type: [builder]`, which tells the framework to treat it as an infrastructure service rather than a regular CRS:
+
+```yaml
+name: oss-crs-builder
+type:
+  - builder
+version: 1.0.0
+
+crs_run_phase:
+  server:
+    dockerfile: oss-crs/server.Dockerfile
+```
+
+The builder has no `prepare_phase` or `target_build_phase` — the framework handles target compilation during snapshot creation.
 
 ## API Endpoints
 
@@ -31,53 +114,17 @@ The builder snapshot requires oss-fuzz scripts (`compile`, `reproduce`, etc.). F
 bash scripts/setup-third-party.sh
 ```
 
-## Usage
-
-Only one builder CRS is allowed per compose file. Add the builder as a CRS entry in your compose file:
-
-```yaml
-oss-crs-builder:
-  source:
-    local_path: /path/to/oss-crs/builder
-  cpuset: "2-3"
-  memory: "8G"
-```
-
-The framework automatically:
-- Creates a snapshot image during the build phase
-- Starts the builder service from the snapshot
-- Sets `OSS_CRS_BUILDER_URL` on all non-builder CRS modules
-- Exposes the builder on the shared Docker network
-
-No additional configuration is needed. Any CRS that uses `libCRS.apply_patch_build()` will automatically communicate with the builder. The libCRS client waits for the builder's `/health` endpoint to respond before sending requests, with exponential backoff up to 120 seconds.
-
-## CRS Configuration
-
-The builder's `crs.yaml` declares `type: [builder]`, which tells the framework to treat it as an infrastructure service rather than a regular CRS:
-
-```yaml
-name: oss-crs-builder
-type:
-  - builder
-version: 1.0.0
-
-crs_run_phase:
-  server:
-    dockerfile: oss-crs/server.Dockerfile
-```
-
-The builder has no `prepare_phase` or `target_build_phase` — the framework handles target compilation during snapshot creation.
-
 ## Environment Variables
 
-The framework sets the following environment variables automatically when a builder CRS is present:
+The framework sets the following environment variables automatically when builder sidecars are present:
 
 | Variable | Set On | Description |
 |---|---|---|
-| `OSS_CRS_BUILDER_URL` | All non-builder CRS modules | HTTP URL of the builder service (e.g., `http://oss-crs-builder_server:8080`). Used by libCRS to send build/POV/test requests. |
-| `OSS_CRS_SNAPSHOT_IMAGE` | All non-builder CRS modules | Docker image tag of the snapshot used by the builder. |
+| `OSS_CRS_SNAPSHOT_IMAGE` | Non-builder modules (e.g., patcher) | Docker image tag of the snapshot used by the builder. |
 
 The builder service itself receives the standard `OSS_CRS_*` environment variables plus oss-fuzz variables (`SANITIZER`, `PROJECT_NAME`, `FUZZING_ENGINE`, etc.).
+
+Builder sidecar URLs are resolved by libCRS at runtime using `get-service-domain` — the `--builder` flag on `apply-patch-build`, `run-pov`, and `run-test` specifies the module name (e.g., `builder-asan`), which resolves to `http://builder-asan.<crs-name>:8080`.
 
 ## Input Validation
 

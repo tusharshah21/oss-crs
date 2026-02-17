@@ -159,7 +159,6 @@ def render_run_crs_compose_docker_compose(
         "target": target,
         "oss_crs_infra_root_path": str(OSS_CRS_ROOT_PATH / "oss-crs-infra"),
         "snapshot_image_tag": target.snapshot_image_tag or "",
-        "builder_url": crs_compose.builder_url,
         "resolve_dockerfile": _resolve_module_dockerfile,
     }
 

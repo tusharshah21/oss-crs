@@ -238,10 +238,14 @@ def main():
     apply_patch_build_parser.add_argument(
         "response_dir", type=Path, help="Directory to receive build results"
     )
+    apply_patch_build_parser.add_argument(
+        "--builder", type=str, required=True,
+        help="Builder sidecar module name (resolved to URL via get-service-domain)",
+    )
 
     def _apply_patch_build(args):
         exit_code = crs_utils.apply_patch_build(
-            args.patch_path, args.response_dir,
+            args.patch_path, args.response_dir, args.builder,
         )
         sys.exit(exit_code)
 
@@ -266,10 +270,15 @@ def main():
         "--build-id", type=str, required=True,
         help="Build ID from a prior apply-patch-build call",
     )
+    run_pov_parser.add_argument(
+        "--builder", type=str, required=True,
+        help="Builder sidecar module name (resolved to URL via get-service-domain)",
+    )
 
     def _run_pov(args):
         exit_code = crs_utils.run_pov(
             args.pov_path, args.harness, args.build_id, args.response_dir,
+            args.builder,
         )
         sys.exit(exit_code)
 
@@ -287,10 +296,14 @@ def main():
         "--build-id", type=str, required=True,
         help="Build ID from a prior apply-patch-build call",
     )
+    run_test_parser.add_argument(
+        "--builder", type=str, required=True,
+        help="Builder sidecar module name (resolved to URL via get-service-domain)",
+    )
 
     def _run_test(args):
         exit_code = crs_utils.run_test(
-            args.build_id, args.response_dir,
+            args.build_id, args.response_dir, args.builder,
         )
         sys.exit(exit_code)
 

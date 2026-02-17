@@ -73,6 +73,7 @@ class CRSUtils(ABC):
         self,
         patch_path: Path,
         response_dir: Path,
+        builder: str,
     ) -> int:
         """Apply a patch to the snapshot image and rebuild.
 
@@ -80,6 +81,7 @@ class CRSUtils(ABC):
             patch_path: Path to a unified diff file.
             response_dir: Directory to receive results:
                 - build_exit_code, build.log, build_id
+            builder: Builder sidecar module name (resolved to URL internally).
 
         Returns:
             Build exit code (0 = success).
@@ -93,6 +95,7 @@ class CRSUtils(ABC):
         harness_name: str,
         build_id: str,
         response_dir: Path,
+        builder: str,
     ) -> int:
         """Run a POV binary against a specific build's output.
 
@@ -102,6 +105,7 @@ class CRSUtils(ABC):
             build_id: Build ID from a prior apply_patch_build call.
             response_dir: Directory to receive results:
                 - pov_exit_code, pov_stderr.log
+            builder: Builder sidecar module name (resolved to URL internally).
 
         Returns:
             POV exit code (0 = no crash = patch fixed the bug).
@@ -113,6 +117,7 @@ class CRSUtils(ABC):
         self,
         build_id: str,
         response_dir: Path,
+        builder: str,
     ) -> int:
         """Run the project's bundled test.sh against a specific build's output.
 
@@ -120,6 +125,7 @@ class CRSUtils(ABC):
             build_id: Build ID from a prior apply_patch_build call.
             response_dir: Directory to receive results:
                 - test_exit_code, test_stderr.log
+            builder: Builder sidecar module name (resolved to URL internally).
 
         Returns:
             Test exit code (0 = tests pass, 0 with skipped=true if no test.sh).

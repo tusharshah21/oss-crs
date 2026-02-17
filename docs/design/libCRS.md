@@ -38,6 +38,7 @@ libCRS relies on several environment variables injected by CRS Compose at contai
 | `OSS_CRS_BUILD_OUT_DIR` | Shared filesystem path for build outputs |
 | `OSS_CRS_SUBMIT_DIR` | Shared filesystem path for submitted artifacts (seeds, PoVs, etc.) |
 | `OSS_CRS_SHARED_DIR` | Shared filesystem path for inter-container file sharing within a CRS |
+| `OSS_CRS_SNAPSHOT_IMAGE` | Docker image tag of the snapshot (set on non-builder modules when the CRS has builder sidecars) |
 
 ## Architecture
 
@@ -194,9 +195,9 @@ $ libCRS register-shared-dir /shared-corpus corpus
 $ libCRS register-shared-dir /shared-corpus corpus
 ```
 
-#### `register-fetch-dir` 📝 *(TODO)*
+#### `register-fetch-dir` 📝 *(Registered in CLI, not yet implemented)*
 
-Register a directory to automatically fetch shared data from other CRSs via oss-crs-infra.
+Register a directory to automatically fetch shared data from other CRSs via oss-crs-infra. The command is registered in the CLI but raises `NotImplementedError` at runtime.
 
 ```bash
 $ libCRS register-fetch-dir [--log <log_path>] <type> <path>
@@ -284,14 +285,74 @@ $ libCRS get-service-domain my-analyzer
 
 ---
 
-### Patching Commands 📝 *(TODO)*
+### Builder Sidecar Commands
 
-#### `apply-patch-build`
+These commands communicate with a builder sidecar service to apply patches, run PoVs, and run tests against incremental builds. The `--builder` flag specifies which builder module to use — libCRS resolves the module name to a URL internally via `get-service-domain`.
 
-Apply a diff patch to a target build and rebuild.
+#### `apply-patch-build` ✅
+
+Apply a unified diff patch to the snapshot image and rebuild. Sends the patch to the builder's `/build` endpoint, polls until completion, and writes the result to the response directory.
 
 ```bash
-$ libCRS apply-patch-build <patch_diff_file> <dst_dir_path>
+$ libCRS apply-patch-build <patch_path> <response_dir> --builder <module_name>
+```
+
+| Argument | Description |
+|---|---|
+| `patch_path` | Path to the unified diff file |
+| `response_dir` | Directory to receive build results (build ID, exit code, logs) |
+| `--builder` | **(Required)** Builder sidecar module name (e.g., `builder-asan`) |
+
+The command exits with the build's exit code (0 = success, non-zero = failure). The response directory contains:
+- `build_id` — The build identifier for use with `run-pov` and `run-test`
+- Build logs and exit status
+
+**Example:**
+```bash
+$ libCRS apply-patch-build /tmp/fix.diff /tmp/build-result --builder builder-asan
+$ cat /tmp/build-result/build_id
+abc123
+```
+
+#### `run-pov` ✅
+
+Run a PoV (proof-of-vulnerability) binary against a specific patched build. Sends the PoV to the builder's `/run-pov` endpoint.
+
+```bash
+$ libCRS run-pov <pov_path> <response_dir> --harness <name> --build-id <id> --builder <module_name>
+```
+
+| Argument | Description |
+|---|---|
+| `pov_path` | Path to the PoV binary file |
+| `response_dir` | Directory to receive PoV results |
+| `--harness` | Harness binary name in `/out/` |
+| `--build-id` | Build ID from a prior `apply-patch-build` call |
+| `--builder` | **(Required)** Builder sidecar module name (e.g., `builder-asan`) |
+
+**Example:**
+```bash
+$ libCRS run-pov /tmp/crash-input /tmp/pov-result \
+    --harness fuzz_target --build-id abc123 --builder builder-asan
+```
+
+#### `run-test` ✅
+
+Run the project's bundled `test.sh` against a specific patched build. Sends the request to the builder's `/run-test` endpoint.
+
+```bash
+$ libCRS run-test <response_dir> --build-id <id> --builder <module_name>
+```
+
+| Argument | Description |
+|---|---|
+| `response_dir` | Directory to receive test results |
+| `--build-id` | Build ID from a prior `apply-patch-build` call |
+| `--builder` | **(Required)** Builder sidecar module name (e.g., `builder-asan`) |
+
+**Example:**
+```bash
+$ libCRS run-test /tmp/test-result --build-id abc123 --builder builder-asan
 ```
 
 ## Typical Usage in a CRS
@@ -336,6 +397,30 @@ ANALYZER_HOST=$(libCRS get-service-domain analyzer)
 /opt/fuzzer --target /opt/target --output /output --seeds /shared-corpus
 ```
 
+### During Run Phase (Builder Sidecar / Patcher)
+
+```bash
+#!/bin/bash
+# run-patcher.sh — executed in a patcher module (uses --builder to specify which builder sidecar to talk to)
+
+# Generate a patch (your CRS logic)
+generate_patch > /tmp/patch.diff
+
+# Apply the patch and rebuild incrementally
+libCRS apply-patch-build /tmp/patch.diff /tmp/build-result --builder builder-asan
+BUILD_ID=$(cat /tmp/build-result/build_id)
+
+# Run PoV against the patched build
+libCRS run-pov /tmp/crash-input /tmp/pov-result \
+  --harness fuzz_target --build-id "$BUILD_ID" --builder builder-asan
+
+# Run the project's test suite against the patched build
+libCRS run-test /tmp/test-result --build-id "$BUILD_ID" --builder builder-asan
+
+# If both pass, submit the patch
+libCRS submit patch /tmp/patch.diff
+```
+
 ## Implementation Status
 
 | Feature | Status | Notes |
@@ -347,8 +432,10 @@ ANALYZER_HOST=$(libCRS get-service-domain analyzer)
 | `register-shared-dir` | ✅ Implemented | Symlink-based sharing |
 | `submit` | ✅ Implemented | Single-file submission |
 | `get-service-domain` | ✅ Implemented | DNS-verified domain resolution |
-| `register-fetch-dir` | 📝 Planned | Registered in CLI, not yet implemented |
+| `register-fetch-dir` | 📝 Planned | Registered in CLI, raises NotImplementedError |
 | `fetch` | 📝 Planned | Registered in CLI, not yet implemented |
-| `apply-patch-build` | 📝 Planned | Not yet registered in CLI |
+| `apply-patch-build` | ✅ Implemented | Sends patch to builder sidecar `/build` endpoint |
+| `run-pov` | ✅ Implemented | Sends PoV to builder sidecar `/run-pov` endpoint |
+| `run-test` | ✅ Implemented | Sends test request to builder sidecar `/run-test` endpoint |
 | `AzureCRSUtils` | 📝 Planned | Azure deployment backend for `CRSUtils` |
 | InfraClient integration | 📝 Stub | `submit_batch` is a no-op stub |
