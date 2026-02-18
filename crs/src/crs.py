@@ -87,8 +87,9 @@ class CRS:
         self.name = name
         self.crs_path = crs_path.expanduser().resolve()
         self.config = CRSConfig.from_yaml_file(self.crs_path / CRS_YAML_PATH)
-        self.work_dir = work_dir / "crs" / self.name
-        self.work_dir.mkdir(parents=True, exist_ok=True)
+        # Store the compose work_dir (the <hash>/ directory) for new directory structure
+        self.compose_work_dir = work_dir
+        self.compose_work_dir.mkdir(parents=True, exist_ok=True)
         self.resource = resource
         self.crs_compose_env = crs_compose_env
 
@@ -188,7 +189,8 @@ class CRS:
                 success=False,
                 error=f"Skipping target {target.name} for CRS {self.name} as it is not supported.",
             )
-        build_work_dir = self.work_dir / (target_base_image.replace(":", "_")) / build_id
+        target_key = target_base_image.replace(":", "_")
+        build_work_dir = self.compose_work_dir / "builds" / build_id / "crs" / self.name / target_key
         for build_config in self.config.target_build_phase.builds:
             build_name = build_config.name
             progress.add_task(
@@ -232,47 +234,110 @@ class CRS:
             )
         return progress.run_added_tasks()
 
-    def __get_sub_work_dir(
-        self,
-        target: Target,
-        sub_dir_name: str,
-        per_harness: bool = False,
-        run_id: str | None = None,
-    ) -> Path:
-        target_image_name = target.get_docker_image_name().replace(":", "_")
-        sub_work_dir = self.work_dir / target_image_name / sub_dir_name
-        if per_harness:
-            assert target.target_harness, (
-                "target_harness must be set for per_harness sub work dir"
-            )
-            sub_work_dir = sub_work_dir / target.target_harness
-        if run_id:
-            sub_work_dir = sub_work_dir / run_id
-        sub_work_dir.mkdir(parents=True, exist_ok=True)
+    def __get_target_key(self, target: Target) -> str:
+        return target.get_docker_image_name().replace(":", "_")
+
+    def get_build_output_dir(self, target: Target, build_id: str | None = None, create: bool = True) -> Path:
+        """
+        New structure: builds/<build-id>/crs/<name>/<target>/BUILD_OUT_DIR/
+
+        Args:
+            target: The target to get the build output directory for.
+            build_id: Build identifier. If None, uses "default".
+            create: If True, creates the directory if it doesn't exist.
+        """
+        target_key = self.__get_target_key(target)
+        if build_id:
+            sub_work_dir = self.compose_work_dir / "builds" / build_id / "crs" / self.name / target_key / "BUILD_OUT_DIR"
+        else:
+            sub_work_dir = self.compose_work_dir / "builds" / "default" / "crs" / self.name / target_key / "BUILD_OUT_DIR"
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
         return sub_work_dir
 
-    def get_build_output_dir(self, target: Target, build_id: str | None = None) -> Path:
-        return self.__get_sub_work_dir(target, "BUILD_OUT_DIR", run_id=build_id)
+    def get_submit_dir(self, target: Target, run_id: str | None = None, create: bool = True) -> Path:
+        """
+        New structure: runs/<run-id>/crs/<name>/<target>/SUBMIT_DIR/<harness>/
 
-    def get_submit_dir(self, target: Target, run_id: str | None = None) -> Path:
-        return self.__get_sub_work_dir(
-            target, "SUBMIT_DIR", per_harness=True, run_id=run_id
+        Args:
+            target: The target to get the submit directory for.
+            run_id: Run identifier. If None, uses "default".
+            create: If True, creates the directory if it doesn't exist.
+        """
+        assert target.target_harness, (
+            "target_harness must be set for submit dir"
         )
+        target_key = self.__get_target_key(target)
+        if run_id:
+            sub_work_dir = self.compose_work_dir / "runs" / run_id / "crs" / self.name / target_key / "SUBMIT_DIR" / target.target_harness
+        else:
+            sub_work_dir = self.compose_work_dir / "runs" / "default" / "crs" / self.name / target_key / "SUBMIT_DIR" / target.target_harness
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
+        return sub_work_dir
 
-    def get_fetch_dir(self, target: Target, run_id: str | None = None) -> Path:
-        return self.__get_sub_work_dir(
-            target, "FETCH_DIR", per_harness=True, run_id=run_id
-        )
+    def get_fetch_dir(self, target: Target, run_id: str | None = None, create: bool = True) -> Path:
+        """
+        New structure: runs/<run-id>/crs/<name>/<target>/FETCH_DIR/<harness>/
 
-    def get_shared_dir(self, target: Target, run_id: str | None = None) -> Path:
-        return self.__get_sub_work_dir(
-            target, "SHARED_DIR", per_harness=True, run_id=run_id
+        Args:
+            target: The target to get the fetch directory for.
+            run_id: Run identifier. If None, uses "default".
+            create: If True, creates the directory if it doesn't exist.
+        """
+        assert target.target_harness, (
+            "target_harness must be set for fetch dir"
         )
+        target_key = self.__get_target_key(target)
+        if run_id:
+            sub_work_dir = self.compose_work_dir / "runs" / run_id / "crs" / self.name / target_key / "FETCH_DIR" / target.target_harness
+        else:
+            sub_work_dir = self.compose_work_dir / "runs" / "default" / "crs" / self.name / target_key / "FETCH_DIR" / target.target_harness
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
+        return sub_work_dir
+
+    def get_shared_dir(self, target: Target, run_id: str | None = None, create: bool = True) -> Path:
+        """
+        New structure: runs/<run-id>/crs/<name>/<target>/SHARED_DIR/<harness>/
+
+        Args:
+            target: The target to get the shared directory for.
+            run_id: Run identifier. If None, uses "default".
+            create: If True, creates the directory if it doesn't exist.
+        """
+        assert target.target_harness, (
+            "target_harness must be set for shared dir"
+        )
+        target_key = self.__get_target_key(target)
+        if run_id:
+            sub_work_dir = self.compose_work_dir / "runs" / run_id / "crs" / self.name / target_key / "SHARED_DIR" / target.target_harness
+        else:
+            sub_work_dir = self.compose_work_dir / "runs" / "default" / "crs" / self.name / target_key / "SHARED_DIR" / target.target_harness
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
+        return sub_work_dir
+
+    def get_snapshot_dir(self, target: Target, build_id: str | None = None, create: bool = True) -> Path:
+        """
+        New structure: builds/<build-id>/targets/<target>/snapshot-out-address/
+
+        Args:
+            target: The target to get the snapshot directory for.
+            build_id: Build identifier. If None, uses "default".
+            create: If True, creates the directory if it doesn't exist.
+        """
+        target_key = self.__get_target_key(target)
+        if build_id:
+            sub_work_dir = self.compose_work_dir / "builds" / build_id / "targets" / target_key / "snapshot-out-address"
+        else:
+            sub_work_dir = self.compose_work_dir / "builds" / "default" / "targets" / target_key / "snapshot-out-address"
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
+        return sub_work_dir
 
     def cleanup_shared_dir(self, target: Target, run_id: str | None = None) -> bool:
-        dir_path = self.__get_sub_work_dir(
-            target, "SHARED_DIR", per_harness=True, run_id=run_id
-        )
+        dir_path = self.get_shared_dir(target, run_id=run_id)
         rm_with_docker(dir_path)
         return True
 

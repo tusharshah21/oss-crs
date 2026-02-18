@@ -34,28 +34,36 @@ class CRSCompose:
         self.deadline = deadline
 
     def get_latest_build_run_id(self, target: Target) -> str | None:
-        """Find the latest build run-id (by unix timestamp) for the given target."""
+        """Find the latest build run-id (by unix timestamp) for the given target.
+
+        New structure: builds/<build-id>/crs/<crs-name>/<target>/BUILD_OUT_DIR/
+        """
         import re
         target_base_image = target.get_docker_image_name()
         target_key = target_base_image.replace(":", "_")
         latest_run_id = None
         latest_ts = 0
 
-        for crs in self.crs_list:
-            build_out_base = crs.work_dir / target_key / "BUILD_OUT_DIR"
-            if not build_out_base.exists():
+        builds_dir = self.work_dir / "builds"
+        if not builds_dir.exists():
+            return None
+
+        for build_id_dir in builds_dir.iterdir():
+            if not build_id_dir.is_dir():
                 continue
-            for run_dir in build_out_base.iterdir():
-                if not run_dir.is_dir():
-                    continue
-                run_id = run_dir.name
-                # Extract first 10-digit sequence (unix timestamp) from run_id
-                match = re.search(r'\d{10}', run_id)
-                if match:
-                    ts = int(match.group())
-                    if ts > latest_ts:
-                        latest_ts = ts
-                        latest_run_id = run_id
+            build_id = build_id_dir.name
+            # Check if any CRS has build output for this target
+            for crs in self.crs_list:
+                build_out_dir = build_id_dir / "crs" / crs.name / target_key / "BUILD_OUT_DIR"
+                if build_out_dir.exists():
+                    # Extract first 10-digit sequence (unix timestamp) from build_id
+                    match = re.search(r'\d{10}', build_id)
+                    if match:
+                        ts = int(match.group())
+                        if ts > latest_ts:
+                            latest_ts = ts
+                            latest_run_id = build_id
+                    break  # Found at least one CRS with this build, no need to check others
         return latest_run_id
 
     def __prepare_oss_crs_infra(
