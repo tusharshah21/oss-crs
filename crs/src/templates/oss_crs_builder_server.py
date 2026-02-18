@@ -230,6 +230,8 @@ def _handle_run_pov(job_id: str, req_dir: Path, resp_dir: Path) -> dict:
     env = os.environ.copy()
     env["OUT"] = str(build_out)
     env["TESTCASE"] = str(pov_path)
+    # Snapshot image derives from the builder (not base-runner), so
+    # FUZZER_ARGS is not inherited from Docker ENV.  Use oss-fuzz defaults.
     env.setdefault("FUZZER_ARGS", "-rss_limit_mb=2560 -timeout=25")
 
     try:
@@ -355,7 +357,7 @@ if __name__ == "__main__":
             out_files = list(Path("/out").iterdir()) if Path("/out").exists() else []
             if out_files:
                 base_out.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree("/out", str(base_out), ignore=_ignore_build_junk)
+                shutil.copytree("/out", str(base_out), ignore=_ignore_build_junk, dirs_exist_ok=True)
                 print("Base build complete: %s" % base_out)
             else:
                 print("Warning: /out is empty after compile, base build skipped")

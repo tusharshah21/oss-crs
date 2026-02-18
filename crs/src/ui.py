@@ -711,7 +711,7 @@ class MultiTaskProgress:
             "-f",
             str(docker_compose_path),
             "up",
-            "--abort-on-container-failure",
+            "--abort-on-container-exit",
         ]
         result = self.run_command_with_streaming_output(
             cmd=cmd,
