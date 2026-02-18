@@ -55,8 +55,9 @@ def register_submit_dir(crs_utils, args):
 
 
 def register_fetch_dir(crs_utils, args):
-    with DaemonContext(log_path=args.log):
-        crs_utils.register_fetch_dir(args.type, args.path)
+    # No DaemonContext needed — register_fetch_dir is a one-shot symlink
+    # operation, unlike register_submit_dir which needs a long-running watcher.
+    crs_utils.register_fetch_dir(args.type, args.path)
 
 
 def get_service_domain(crs_utils, args):

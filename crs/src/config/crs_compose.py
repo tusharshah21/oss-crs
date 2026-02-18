@@ -69,6 +69,11 @@ class CRSEntry(ResourceConfig):
     source: CRSSource
     additional_env: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("additional_env", mode="before")
+    @classmethod
+    def coerce_none_env(cls, v):
+        return v if v is not None else {}
+
 
 class RunEnv(Enum):
     LOCAL = "local"

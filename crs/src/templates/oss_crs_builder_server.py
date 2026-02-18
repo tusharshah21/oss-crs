@@ -230,6 +230,7 @@ def _handle_run_pov(job_id: str, req_dir: Path, resp_dir: Path) -> dict:
     env = os.environ.copy()
     env["OUT"] = str(build_out)
     env["TESTCASE"] = str(pov_path)
+    env.setdefault("FUZZER_ARGS", "-rss_limit_mb=2560 -timeout=25")
 
     try:
         result = subprocess.run(
@@ -243,6 +244,7 @@ def _handle_run_pov(job_id: str, req_dir: Path, resp_dir: Path) -> dict:
         return {
             "pov_exit_code": result.returncode,
             "pov_stderr": result.stderr,
+            "pov_stdout": result.stdout,
         }
     except subprocess.TimeoutExpired:
         return {
