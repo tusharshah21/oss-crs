@@ -7,7 +7,7 @@ from pathlib import Path
 import requests as http_requests
 
 from .base import CRSUtils, DataType
-from .common import is_data_file, rsync_copy, get_env
+from .common import rsync_copy, get_env
 from .fetch import FetchHelper
 from .submit import SubmitHelper
 
@@ -21,12 +21,13 @@ def _get_build_out_dir() -> Path:
 class LocalCRSUtils(CRSUtils):
     def __init__(self):
         super().__init__()
+        self._builders_healthy: dict[str, bool] = {}
 
     def __init_submit_helper(self, data_type: DataType) -> SubmitHelper:
         OSS_CRS_SUBMIT_DIR = Path(get_env("OSS_CRS_SUBMIT_DIR"))
         shared_fs_dir = OSS_CRS_SUBMIT_DIR / data_type.value
         shared_fs_dir.mkdir(parents=True, exist_ok=True)
-        return SubmitHelper(data_type, shared_fs_dir, self.infra_client)
+        return SubmitHelper(shared_fs_dir)
 
     def download_build_output(self, src_path: str, dst_path: Path) -> None:
         src = _get_build_out_dir() / src_path
@@ -64,21 +65,16 @@ class LocalCRSUtils(CRSUtils):
     def __init_fetch_helper(self, data_type: DataType) -> FetchHelper:
         return FetchHelper(data_type, self.infra_client)
 
-    def register_fetch_dir(self, type: DataType, path: Path) -> None:
-        helper = self.__init_fetch_helper(type)
+    def register_fetch_dir(self, data_type: DataType, path: Path) -> None:
+        helper = self.__init_fetch_helper(data_type)
         helper.register_dir(path)
 
     def submit(self, data_type: DataType, src: Path) -> None:
         helper = self.__init_submit_helper(data_type)
         helper.submit_file(src)
 
-    def fetch(self, type: DataType, dst: Path) -> list[str]:
-        helper = self.__init_fetch_helper(type)
-        # Pre-populate known set from existing files in dst
-        if dst.is_dir():
-            for f in dst.iterdir():
-                if is_data_file(f):
-                    helper.fetched.add(f.name)
+    def fetch(self, data_type: DataType, dst: Path) -> list[str]:
+        helper = self.__init_fetch_helper(data_type)
         return helper.fetch_once(dst)
 
     def get_service_domain(self, service_name: str) -> str:
@@ -92,8 +88,6 @@ class LocalCRSUtils(CRSUtils):
             raise RuntimeError(f"Service domain '{ret}' is not accessible: {e}")
 
         return ret
-
-    _builders_healthy: dict[str, bool] = {}
 
     def _get_builder_url(self, builder: str) -> str:
         domain = self.get_service_domain(builder)
@@ -147,9 +141,6 @@ class LocalCRSUtils(CRSUtils):
         Returns the result dict, or None on timeout/connection error.
         """
         if not self._wait_for_builder_health(builder):
-            if files:
-                for f in files.values():
-                    f.close()
             return None
 
         builder_url = self._get_builder_url(builder)
@@ -162,10 +153,6 @@ class LocalCRSUtils(CRSUtils):
         except (http_requests.ConnectionError, http_requests.Timeout, http_requests.HTTPError) as e:
             logger.error("Failed to submit job to %s: %s", endpoint, e)
             return None
-        finally:
-            if files:
-                for f in files.values():
-                    f.close()
 
         job_id = resp.json()["id"]
         logger.info("Submitted job %s to %s", job_id, endpoint)
@@ -198,8 +185,9 @@ class LocalCRSUtils(CRSUtils):
         builder: str,
     ) -> int:
         """Apply a patch and rebuild via the builder sidecar."""
-        files = {"patch": open(patch_path, "rb")}
-        result = self._submit_and_poll("/build", builder, files)
+        with open(patch_path, "rb") as patch_file:
+            files = {"patch": patch_file}
+            result = self._submit_and_poll("/build", builder, files)
 
         response_dir.mkdir(parents=True, exist_ok=True)
         if result is None:
@@ -225,9 +213,10 @@ class LocalCRSUtils(CRSUtils):
         builder: str,
     ) -> int:
         """Run a POV binary via the builder sidecar."""
-        files = {"pov": open(pov_path, "rb")}
-        data = {"harness_name": harness_name, "build_id": build_id}
-        result = self._submit_and_poll("/run-pov", builder, files, data, timeout=180)
+        with open(pov_path, "rb") as pov_file:
+            files = {"pov": pov_file}
+            data = {"harness_name": harness_name, "build_id": build_id}
+            result = self._submit_and_poll("/run-pov", builder, files, data, timeout=180)
 
         response_dir.mkdir(parents=True, exist_ok=True)
         if result is None:

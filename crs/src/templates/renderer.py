@@ -150,6 +150,13 @@ def render_run_crs_compose_docker_compose(
 ) -> str:
     template_path = CUR_DIR / "run-crs-compose.docker-compose.yaml.j2"
 
+    # Exchange dir is shared across all CRSs — compute once
+    exchange_dir = None
+    for crs in crs_compose.crs_list:
+        if not crs.config.is_builder:
+            exchange_dir = str(crs.get_exchange_dir(target))
+            break
+
     context = {
         "libCRS_path": str(LIBCRS_PATH),
         "crs_compose_name": crs_compose_name,
@@ -160,6 +167,7 @@ def render_run_crs_compose_docker_compose(
         "oss_crs_infra_root_path": str(OSS_CRS_ROOT_PATH / "oss-crs-infra"),
         "snapshot_image_tag": target.snapshot_image_tag or "",
         "resolve_dockerfile": _resolve_module_dockerfile,
+        "exchange_dir": exchange_dir,
     }
 
     llm_context = prepare_llm_context(tmp_docker_compose, crs_compose)

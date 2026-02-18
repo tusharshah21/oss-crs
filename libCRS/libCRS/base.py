@@ -18,8 +18,8 @@ class DataType(str, Enum):
 
 class CRSUtils(ABC):
     def __init__(self):
-        # TODO: InfraClient currently only copies files to EXCHANGE_DIR.
-        # Future: add dedup, rate limiting, or API calls to a real infra service.
+        # InfraClient handles fetching from FETCH_DIR (read-only).
+        # Writes go through SUBMIT_DIR → exchange sidecar → EXCHANGE_DIR.
         self.infra_client = InfraClient()
 
     @abstractmethod
@@ -38,7 +38,7 @@ class CRSUtils(ABC):
         pass
 
     @abstractmethod
-    def register_submit_dir(self, type: DataType, path: Path) -> None:
+    def register_submit_dir(self, data_type: DataType, path: Path) -> None:
         """Register a directory for automatic submission to oss-crs-infra."""
         pass
 
@@ -48,17 +48,17 @@ class CRSUtils(ABC):
         pass
 
     @abstractmethod
-    def register_fetch_dir(self, type: DataType, path: Path) -> None:
+    def register_fetch_dir(self, data_type: DataType, path: Path) -> None:
         """Register a directory for automatic fetching of shared data from oss-crs-infra."""
         pass
 
     @abstractmethod
-    def submit(self, type: DataType, src: Path) -> None:
+    def submit(self, data_type: DataType, src: Path) -> None:
         """Submit a local file to oss-crs-infra."""
         pass
 
     @abstractmethod
-    def fetch(self, type: DataType, dst: Path) -> list[str]:
+    def fetch(self, data_type: DataType, dst: Path) -> list[str]:
         """Download shared data from oss-crs-infra to a local directory.
 
         Returns:

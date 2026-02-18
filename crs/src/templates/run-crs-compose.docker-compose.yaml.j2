@@ -58,8 +58,8 @@ services:
       - OSS_CRS_BUILD_OUT_DIR=/OSS_CRS_BUILD_OUT_DIR
       - OSS_CRS_SUBMIT_DIR=/OSS_CRS_SUBMIT_DIR
       - OSS_CRS_SHARED_DIR=/OSS_CRS_SHARED_DIR
-{%- if not module_config.run_snapshot and not crs.config.is_builder %}
-      - OSS_CRS_EXCHANGE_DIR=/OSS_CRS_EXCHANGE_DIR
+{%- if exchange_dir %}
+      - OSS_CRS_FETCH_DIR=/OSS_CRS_FETCH_DIR
 {%- endif %}
 {%- if snapshot_image_tag and not module_config.run_snapshot and not crs.config.is_builder %}
       - OSS_CRS_SNAPSHOT_IMAGE={{ snapshot_image_tag }}
@@ -85,8 +85,8 @@ services:
       - {{ crs.get_build_output_dir(target) }}:/OSS_CRS_BUILD_OUT_DIR:ro
       - {{ crs.get_submit_dir(target) }}:/OSS_CRS_SUBMIT_DIR:rw
       - {{ crs.get_shared_dir(target) }}:/OSS_CRS_SHARED_DIR:rw
-{%- if not module_config.run_snapshot and not crs.config.is_builder %}
-      - {{ crs.get_exchange_dir(target) }}:/OSS_CRS_EXCHANGE_DIR:rw
+{%- if exchange_dir %}
+      - {{ exchange_dir }}:/OSS_CRS_FETCH_DIR:ro
 {%- endif %}
 {%- if module_config.run_snapshot or crs.config.is_builder %}
     attach: false
@@ -118,6 +118,7 @@ services:
   oss-crs-litellm:
     image: ghcr.io/berriai/litellm-database:main-stable
     attach: false
+    restart: on-failure:3
     depends_on:
       oss-crs-postgres:
         condition: service_healthy
@@ -144,6 +145,7 @@ services:
   oss-crs-postgres:
     image: postgres:16-alpine
     attach: false
+    restart: on-failure:3
     environment:
       - POSTGRES_USER=crs
       - POSTGRES_PASSWORD={{ llm_context.postgres_password }}
@@ -174,3 +176,22 @@ services:
       - {{ llm_context.key_gen_request_path }}:/key_gen_request.yaml:ro
   ###########################################
 {% endif %}
+  ###########################################
+  # OSS-CRS-EXCHANGE SIDECAR
+  ###########################################
+{%- if exchange_dir %}
+  oss-crs-exchange:
+    build:
+      context: {{ oss_crs_infra_root_path }}/exchange
+    attach: false
+    restart: on-failure:3
+    volumes:
+      - {{ exchange_dir }}:/exchange:rw
+{%- for crs in crs_list %}
+{%- if not crs.config.is_builder %}
+      - {{ crs.get_submit_dir(target) }}:/submit/{{ crs.name }}:ro
+{%- endif %}
+{%- endfor %}
+    networks:
+      {{ crs_compose_name }}-infra-only-network:
+{%- endif %}
