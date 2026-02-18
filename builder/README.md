@@ -134,4 +134,4 @@ The builder validates all user-provided parameters:
 
 ## Build Artifacts
 
-Build artifacts from each patch are stored at `/builds/{build_id}/out/` inside the builder container. These are shared with other CRSs via `libCRS register-shared-dir`. A base (unpatched) build is created automatically at startup as `/builds/base/out/`.
+Build artifacts from each patch are stored at `/builds/{build_id}/out/` inside the builder container. These are shared with other containers within the same CRS via `libCRS register-shared-dir` (on host: `SHARED_DIR/builds/{build_id}/out/`). A base (unpatched) build is created automatically at startup as `/builds/base/out/`.
