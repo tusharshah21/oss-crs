@@ -7,7 +7,8 @@ from pathlib import Path
 import requests as http_requests
 
 from .base import CRSUtils, DataType
-from .common import rsync_copy, get_env
+from .common import is_data_file, rsync_copy, get_env
+from .fetch import FetchHelper
 from .submit import SubmitHelper
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class LocalCRSUtils(CRSUtils):
         OSS_CRS_SUBMIT_DIR = Path(get_env("OSS_CRS_SUBMIT_DIR"))
         shared_fs_dir = OSS_CRS_SUBMIT_DIR / data_type.value
         shared_fs_dir.mkdir(parents=True, exist_ok=True)
-        return SubmitHelper(data_type, shared_fs_dir)
+        return SubmitHelper(data_type, shared_fs_dir, self.infra_client)
 
     def download_build_output(self, src_path: str, dst_path: Path) -> None:
         src = _get_build_out_dir() / src_path
@@ -60,22 +61,25 @@ class LocalCRSUtils(CRSUtils):
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.symlink_to(shared_path)
 
-    def register_fetch_dir(self, type: DataType, path: Path) -> None:
-        if path.exists():
-            raise FileExistsError(f"Local path '{path}' already exists")
+    def __init_fetch_helper(self, data_type: DataType) -> FetchHelper:
+        return FetchHelper(data_type, self.infra_client)
 
-        OSS_CRS_FETCH_DIR = Path(get_env("OSS_CRS_FETCH_DIR"))
-        fetch_type_dir = OSS_CRS_FETCH_DIR / type.value
-        fetch_type_dir.mkdir(parents=True, exist_ok=True)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.symlink_to(fetch_type_dir)
+    def register_fetch_dir(self, type: DataType, path: Path) -> None:
+        helper = self.__init_fetch_helper(type)
+        helper.register_dir(path)
 
     def submit(self, data_type: DataType, src: Path) -> None:
         helper = self.__init_submit_helper(data_type)
         helper.submit_file(src)
 
     def fetch(self, type: DataType, dst: Path) -> list[str]:
-        raise NotImplementedError("TODO: fetch is not yet implemented")
+        helper = self.__init_fetch_helper(type)
+        # Pre-populate known set from existing files in dst
+        if dst.is_dir():
+            for f in dst.iterdir():
+                if is_data_file(f):
+                    helper.fetched.add(f.name)
+        return helper.fetch_once(dst)
 
     def get_service_domain(self, service_name: str) -> str:
         CRS_NAME = get_env("OSS_CRS_NAME")

@@ -258,11 +258,27 @@ class CRS:
     def get_submit_dir(self, target: Target) -> Path:
         return self.__get_sub_work_dir(target, "SUBMIT_DIR", per_harness=True)
 
-    def get_fetch_dir(self, target: Target) -> Path:
-        return self.__get_sub_work_dir(target, "FETCH_DIR", per_harness=True)
-
     def get_shared_dir(self, target: Target) -> Path:
         return self.__get_sub_work_dir(target, "SHARED_DIR", per_harness=True)
+
+    def get_exchange_dir(self, target: Target) -> Path:
+        """Get the shared exchange directory (shared across ALL CRSs).
+
+        Navigates up from per-CRS work_dir (work_dir/crs/<name>) to compose
+        work_dir (work_dir), then into EXCHANGE_DIR/<target>/<harness>/.
+        """
+        target_image_name = target.get_docker_image_name().replace(":", "_")
+        assert target.target_harness, (
+            "target_harness must be set for exchange dir"
+        )
+        exchange_dir = (
+            self.work_dir.parent.parent
+            / "EXCHANGE_DIR"
+            / target_image_name
+            / target.target_harness
+        )
+        exchange_dir.mkdir(parents=True, exist_ok=True)
+        return exchange_dir
 
     def cleanup_shared_dir(self, target: Target) -> bool:
         dir_path = self.__get_sub_work_dir(target, "SHARED_DIR", per_harness=True)

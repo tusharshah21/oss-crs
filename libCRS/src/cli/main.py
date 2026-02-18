@@ -55,9 +55,8 @@ def register_submit_dir(crs_utils, args):
 
 
 def register_fetch_dir(crs_utils, args):
-    # No DaemonContext needed — register_fetch_dir is a one-shot symlink
-    # operation, unlike register_submit_dir which needs a long-running watcher.
-    crs_utils.register_fetch_dir(args.type, args.path)
+    with DaemonContext(log_path=args.log):
+        crs_utils.register_fetch_dir(args.type, args.path)
 
 
 def get_service_domain(crs_utils, args):
@@ -119,6 +118,10 @@ def main():
     # Data registration commands (auto-sync directories)
     # =========================================================================
 
+    # Valid types for submit vs fetch commands
+    submit_types = [DataType.POV, DataType.SEED, DataType.BUG_CANDIDATE, DataType.PATCH]
+    fetch_types = list(DataType)
+
     # register-submit-dir command (auto-submit data to oss-crs-infra)
     register_submit_dir_parser = subparsers.add_parser(
         "register-submit-dir",
@@ -127,9 +130,9 @@ def main():
     register_submit_dir_parser.add_argument(
         "type",
         type=DataType,
-        choices=list(DataType),
+        choices=submit_types,
         metavar="TYPE",
-        help="Type of data: pov, seed, bug-candidate",
+        help="Type of data: pov, seed, bug-candidate, patch",
     )
     register_submit_dir_parser.add_argument(
         "path", type=Path, help="Directory path to register"
@@ -171,9 +174,9 @@ def main():
     register_fetch_dir_parser.add_argument(
         "type",
         type=DataType,
-        choices=list(DataType),
+        choices=fetch_types,
         metavar="TYPE",
-        help="Type of data: pov, seed, bug-candidate",
+        help="Type of data: pov, seed, bug-candidate, patch, diff",
     )
     register_fetch_dir_parser.add_argument(
         "path", type=Path, help="Directory path to receive shared data"
@@ -200,9 +203,9 @@ def main():
     submit_parser.add_argument(
         "type",
         type=DataType,
-        choices=list(DataType),
+        choices=submit_types,
         metavar="TYPE",
-        help="Type of data: pov, seed, bug-candidate",
+        help="Type of data: pov, seed, bug-candidate, patch",
     )
     submit_parser.add_argument("path", type=Path, help="File path to submit")
     submit_parser.set_defaults(func=lambda args: crs_utils.submit(args.type, args.path))
@@ -215,9 +218,9 @@ def main():
     fetch_parser.add_argument(
         "type",
         type=DataType,
-        choices=list(DataType),
+        choices=fetch_types,
         metavar="TYPE",
-        help="Type of data: pov, seed, bug-candidate",
+        help="Type of data: pov, seed, bug-candidate, patch, diff",
     )
     fetch_parser.add_argument("path", type=Path, help="Output directory path")
     fetch_parser.set_defaults(

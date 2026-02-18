@@ -18,6 +18,8 @@ class DataType(str, Enum):
 
 class CRSUtils(ABC):
     def __init__(self):
+        # TODO: InfraClient currently only copies files to EXCHANGE_DIR.
+        # Future: add dedup, rate limiting, or API calls to a real infra service.
         self.infra_client = InfraClient()
 
     @abstractmethod

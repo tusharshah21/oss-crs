@@ -8,7 +8,7 @@ from .crs import CRS
 from .ui import MultiTaskProgress, TaskResult
 from .target import Target
 from .templates import renderer
-from .utils import TmpDockerCompose
+from .utils import TmpDockerCompose, rm_with_docker
 
 
 class CRSCompose:
@@ -288,6 +288,13 @@ class CRSCompose:
             tmp_docker_compose.docker_compose.write_text(content)
             return TaskResult(success=True)
 
+        def cleanup_exchange_dir(progress: MultiTaskProgress) -> TaskResult:
+            # Exchange dir is shared across all CRSs — use any CRS to get the path
+            if self.crs_list:
+                exchange_dir = self.crs_list[0].get_exchange_dir(target)
+                rm_with_docker(exchange_dir)
+            return TaskResult(success=True)
+
         def cleanup_shared_dirs(progress: MultiTaskProgress) -> TaskResult:
             for crs in self.crs_list:
                 progress.add_task(
@@ -298,46 +305,45 @@ class CRSCompose:
                 )
             return progress.run_added_tasks()
 
-        def copy_povs(progress: MultiTaskProgress) -> TaskResult:
+        def _get_exchange_dir() -> Path:
+            # All CRSs share the same exchange dir — use the first non-builder CRS
             for crs in self.crs_list:
-                if crs.config.is_builder:
-                    continue
-                pov_subdir = crs.get_fetch_dir(target) / "pov"
-                pov_subdir.mkdir(parents=True, exist_ok=True)
-                for f in pov_files:
-                    shutil.copy2(f, pov_subdir / f.name)
+                if not crs.config.is_builder:
+                    return crs.get_exchange_dir(target)
+            raise ValueError("No non-builder CRS found")
+
+        def copy_povs(progress: MultiTaskProgress) -> TaskResult:
+            pov_subdir = _get_exchange_dir() / "pov"
+            pov_subdir.mkdir(parents=True, exist_ok=True)
+            for f in pov_files:
+                shutil.copy2(f, pov_subdir / f.name)
             return TaskResult(success=True)
 
         def copy_diff(progress: MultiTaskProgress) -> TaskResult:
-            for crs in self.crs_list:
-                if crs.config.is_builder:
-                    continue
-                diff_subdir = crs.get_fetch_dir(target) / "diff"
-                diff_subdir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(diff_path, diff_subdir / "ref.diff")
+            diff_subdir = _get_exchange_dir() / "diff"
+            diff_subdir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(diff_path, diff_subdir / "ref.diff")
             return TaskResult(success=True)
 
         def copy_corpus(progress: MultiTaskProgress) -> TaskResult:
-            for crs in self.crs_list:
-                if crs.config.is_builder:
-                    continue
-                seed_subdir = crs.get_fetch_dir(target) / "seed"
-                seed_subdir.mkdir(parents=True, exist_ok=True)
-                for f in corpus_dir.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, seed_subdir / f.name)
+            seed_subdir = _get_exchange_dir() / "seed"
+            seed_subdir.mkdir(parents=True, exist_ok=True)
+            for f in corpus_dir.iterdir():
+                if f.is_file():
+                    shutil.copy2(f, seed_subdir / f.name)
             return TaskResult(success=True)
 
+        progress.add_task("Clean up exchange directory", cleanup_exchange_dir)
         progress.add_task("Clean up shared directories", cleanup_shared_dirs)
 
         if pov_files:
-            progress.add_task("Copy POV files to FETCH_DIR/pov/", copy_povs)
+            progress.add_task("Copy POV files to EXCHANGE_DIR/pov/", copy_povs)
 
         if diff_path:
-            progress.add_task("Copy diff file to FETCH_DIR/diff/", copy_diff)
+            progress.add_task("Copy diff file to EXCHANGE_DIR/diff/", copy_diff)
 
         if corpus_dir:
-            progress.add_task("Copy corpus files to FETCH_DIR/seed/", copy_corpus)
+            progress.add_task("Copy corpus files to EXCHANGE_DIR/seed/", copy_corpus)
 
         progress.add_task(
             "Prepare combined docker compose file", prepare_docker_compose

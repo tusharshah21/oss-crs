@@ -35,6 +35,12 @@ def rsync_copy(src: Path, dst: Path) -> None:
         subprocess.run(["rsync", "-a", str(src), str(dst)], check=True)
 
 
+def is_data_file(path: Path) -> bool:
+    """Check if a path is a regular data file (not a directory, not a dotfile)."""
+    return path.is_file() and not path.name.startswith(".")
+
+
+
 def file_hash(path: Path) -> str:
     """Compute the MD5 checksum of a file."""
     h = hashlib.md5()

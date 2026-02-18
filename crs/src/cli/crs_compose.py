@@ -93,13 +93,13 @@ def add_run_command(subparsers):
         "--pov",
         type=Path,
         default=None,
-        help="Single POV file to copy into CRS FETCH_DIR",
+        help="Single POV file to copy into EXCHANGE_DIR",
     )
     run.add_argument(
         "--pov-dir",
         type=Path,
         default=None,
-        help="Directory containing POV files to copy into CRS FETCH_DIR",
+        help="Directory containing POV files to copy into EXCHANGE_DIR",
     )
     run.add_argument(
         "--diff",

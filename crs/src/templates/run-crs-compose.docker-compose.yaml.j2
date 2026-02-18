@@ -57,8 +57,10 @@ services:
       - OSS_CRS_MEMORY_LIMIT="{{ crs.resource.memory }}"
       - OSS_CRS_BUILD_OUT_DIR=/OSS_CRS_BUILD_OUT_DIR
       - OSS_CRS_SUBMIT_DIR=/OSS_CRS_SUBMIT_DIR
-      - OSS_CRS_FETCH_DIR=/OSS_CRS_FETCH_DIR
       - OSS_CRS_SHARED_DIR=/OSS_CRS_SHARED_DIR
+{%- if not module_config.use_snapshot and not crs.config.is_builder %}
+      - OSS_CRS_EXCHANGE_DIR=/OSS_CRS_EXCHANGE_DIR
+{%- endif %}
 {%- if snapshot_image_tag and not module_config.use_snapshot and not crs.config.is_builder %}
       - OSS_CRS_SNAPSHOT_IMAGE={{ snapshot_image_tag }}
 {%- endif %}
@@ -82,8 +84,10 @@ services:
     volumes:
       - {{ crs.get_build_output_dir(target) }}:/OSS_CRS_BUILD_OUT_DIR:ro
       - {{ crs.get_submit_dir(target) }}:/OSS_CRS_SUBMIT_DIR:rw
-      - {{ crs.get_fetch_dir(target) }}:/OSS_CRS_FETCH_DIR:ro
       - {{ crs.get_shared_dir(target) }}:/OSS_CRS_SHARED_DIR:rw
+{%- if not module_config.use_snapshot and not crs.config.is_builder %}
+      - {{ crs.get_exchange_dir(target) }}:/OSS_CRS_EXCHANGE_DIR:rw
+{%- endif %}
 {%- if module_config.use_snapshot or crs.config.is_builder %}
     shm_size: "2g"
     restart: on-failure:3
