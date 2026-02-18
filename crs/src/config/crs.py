@@ -96,7 +96,7 @@ class TargetBuildPhase(BaseModel):
 class CRSRunPhaseModule(BaseModel):
     """Configuration for a single CRS run phase module.
 
-    A module with use_snapshot=True uses the snapshot image from the build phase
+    A module with run_snapshot=True uses the snapshot image from the build phase
     as its base image. The dockerfile can be:
     - Omitted: no service for this module (snapshot only used as base)
     - "oss-crs-infra:<module>": framework-provided service (e.g., default-builder)
@@ -104,13 +104,13 @@ class CRSRunPhaseModule(BaseModel):
     """
 
     dockerfile: Optional[str] = None
-    use_snapshot: bool = False
+    run_snapshot: bool = False
     additional_env: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_dockerfile_requirement(self):
         """Ensure dockerfile is provided for non-snapshot modules."""
-        if not self.use_snapshot and self.dockerfile is None:
+        if not self.run_snapshot and self.dockerfile is None:
             raise ValueError("dockerfile is required for non-snapshot modules")
         return self
 
@@ -192,7 +192,7 @@ class CRSConfig(BaseModel):
     @property
     def has_builder_module(self) -> bool:
         """Check if this CRS has a run phase module that uses a snapshot."""
-        return any(m.use_snapshot for m in self.crs_run_phase.modules.values())
+        return any(m.run_snapshot for m in self.crs_run_phase.modules.values())
 
     @field_validator("version")
     @classmethod

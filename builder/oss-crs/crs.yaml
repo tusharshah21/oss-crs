@@ -22,15 +22,15 @@
 #     patcher:
 #       dockerfile: patcher.Dockerfile
 #     inc-builder-asan:                   # same name links to build phase
-#       use_snapshot: true
+#       run_snapshot: true
 #       dockerfile: oss-crs-infra:default-builder  # explicit framework module
 #     inc-builder-ubsan:
-#       use_snapshot: true
+#       run_snapshot: true
 #       dockerfile: oss-crs-infra:default-builder
 #
 #   For custom builder sidecar:
 #     inc-builder-asan:
-#       use_snapshot: true
+#       run_snapshot: true
 #       dockerfile: custom-sidecar.Dockerfile  # CRS developer's own code
 #
 # The builder sidecar shares resources with the parent CRS — no separate

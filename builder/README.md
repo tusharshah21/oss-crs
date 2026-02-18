@@ -2,7 +2,7 @@
 
 The **Builder** provides snapshot-based incremental builds for patch-testing CRSs. Instead of rebuilding the entire target from scratch for each patch, the builder creates a Docker snapshot of the compiled project and applies patches incrementally on top of it.
 
-> **Recommended approach:** Declare builder sidecars directly in your CRS's own `crs.yaml` using `snapshot: true` build steps and `use_snapshot: true` modules. This is simpler and does not require a separate compose entry. See the [New Pattern](#new-pattern-per-crs-builder-sidecar) section below.
+> **Recommended approach:** Declare builder sidecars directly in your CRS's own `crs.yaml` using `snapshot: true` build steps and `run_snapshot: true` modules. This is simpler and does not require a separate compose entry. See the [New Pattern](#new-pattern-per-crs-builder-sidecar) section below.
 
 ## How It Works
 
@@ -39,7 +39,7 @@ crs_run_phase:
     dockerfile: oss-crs/docker-compose/patcher.Dockerfile
   builder-asan:
     dockerfile: oss-crs-infra:default-builder
-    use_snapshot: true
+    run_snapshot: true
 
 supported_target:
   mode:
@@ -55,7 +55,7 @@ supported_target:
 
 The framework automatically:
 - Creates a snapshot image during the build phase (for each `snapshot: true` build step)
-- Starts builder sidecar modules from the snapshot (for each `use_snapshot: true` module)
+- Starts builder sidecar modules from the snapshot (for each `run_snapshot: true` module)
 - Sets `OSS_CRS_SNAPSHOT_IMAGE` on non-builder modules (e.g., patcher)
 - Exposes builder sidecars on the CRS's private Docker network
 

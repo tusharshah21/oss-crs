@@ -530,7 +530,7 @@ Use incremental builds when your CRS needs to:
 ```
 
 1. During `build-target`, snapshot build steps (with `snapshot: true`) create a Docker image of the fully compiled target.
-2. During `run`, builder sidecar modules (with `use_snapshot: true`) start from the snapshot image and expose an HTTP API.
+2. During `run`, builder sidecar modules (with `run_snapshot: true`) start from the snapshot image and expose an HTTP API.
 3. Your patcher module sends patches via `libCRS apply-patch-build`, which calls the builder's `/build` endpoint.
 4. The builder applies the patch, recompiles incrementally, and returns the result.
 
@@ -554,13 +554,13 @@ crs_run_phase:
     dockerfile: oss-crs/docker-compose/patcher.Dockerfile
   builder-asan:
     dockerfile: oss-crs-infra:default-builder
-    use_snapshot: true
+    run_snapshot: true
   builder-coverage:
     dockerfile: oss-crs-infra:default-builder
-    use_snapshot: true
+    run_snapshot: true
 ```
 
-Only builder sidecar modules get `use_snapshot: true`. The patcher is a regular module that uses the `--builder` flag on libCRS commands to specify which builder sidecar to communicate with.
+Only builder sidecar modules get `run_snapshot: true`. The patcher is a regular module that uses the `--builder` flag on libCRS commands to specify which builder sidecar to communicate with.
 
 ### Compose File Setup
 
@@ -629,10 +629,10 @@ crs_run_phase:
     dockerfile: oss-crs/docker-compose/patcher.Dockerfile
   builder-asan:
     dockerfile: oss-crs-infra:default-builder
-    use_snapshot: true
+    run_snapshot: true
   builder-ubsan:
     dockerfile: oss-crs-infra:default-builder
-    use_snapshot: true
+    run_snapshot: true
 ```
 
 ### Custom Builder Sidecar
@@ -649,7 +649,7 @@ target_build_phase:
 crs_run_phase:
   patcher:
     dockerfile: oss-crs/docker-compose/patcher.Dockerfile
-    use_snapshot:
+    run_snapshot:
       - my-builder
   my-builder:
     dockerfile: oss-crs/my-custom-sidecar.Dockerfile  # your own sidecar
@@ -799,7 +799,7 @@ Before publishing your CRS, verify:
 **Additional checks for incremental builds:**
 
 - [ ] Snapshot build steps have `snapshot: true` and use `oss-crs-infra:default-builder` (or a custom builder Dockerfile)
-- [ ] Builder sidecar modules have `use_snapshot: true` in `crs_run_phase`
+- [ ] Builder sidecar modules have `run_snapshot: true` in `crs_run_phase`
 - [ ] Patcher module uses `apply-patch-build`, `run-pov`, and/or `run-test` commands correctly
 - [ ] Each sanitizer has its own snapshot build step and builder sidecar module
 

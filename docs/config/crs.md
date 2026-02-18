@@ -154,8 +154,8 @@ The CRS run phase is a dictionary where each key is a module name and each value
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `dockerfile` | `string` | Conditional | - | Path to the Dockerfile (must contain "Dockerfile" or end with `.Dockerfile`). Can use `oss-crs-infra:` prefix for framework-provided services. **Required** when `use_snapshot` is `false`; **optional** when `use_snapshot` is `true`. |
-| `use_snapshot` | `bool` | No | `false` | When `true`, uses the snapshot image from the build phase as this module's base image. Enables the module to use builder sidecar commands (`apply-patch-build`, `run-pov`, `run-test`). |
+| `dockerfile` | `string` | Conditional | - | Path to the Dockerfile (must contain "Dockerfile" or end with `.Dockerfile`). Can use `oss-crs-infra:` prefix for framework-provided services. **Required** when `run_snapshot` is `false`; **optional** when `run_snapshot` is `true`. |
+| `run_snapshot` | `bool` | No | `false` | When `true`, uses the snapshot image from the build phase as this module's base image. Enables the module to use builder sidecar commands (`apply-patch-build`, `run-pov`, `run-test`). |
 | `additional_env` | `dict[string, string]` | No | `{}` | Additional environment variables to pass to the module |
 
 ### Example
@@ -174,7 +174,7 @@ crs_run_phase:
 
 ### Example with Incremental Build Modules
 
-Builder sidecar modules use `use_snapshot: true` to start from the snapshot image. The patcher module is a regular module that communicates with builder sidecars using the `--builder` flag on libCRS commands:
+Builder sidecar modules use `run_snapshot: true` to start from the snapshot image. The patcher module is a regular module that communicates with builder sidecars using the `--builder` flag on libCRS commands:
 
 ```yaml
 crs_run_phase:
@@ -184,10 +184,10 @@ crs_run_phase:
       MAX_PATCHES: "100"
   builder-asan:
     dockerfile: oss-crs-infra:default-builder
-    use_snapshot: true
+    run_snapshot: true
   builder-coverage:
     dockerfile: oss-crs-infra:default-builder
-    use_snapshot: true
+    run_snapshot: true
 ```
 
 ---
