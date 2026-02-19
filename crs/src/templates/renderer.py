@@ -152,6 +152,7 @@ def render_run_crs_compose_docker_compose(
     target: "Target",
     run_id: str,
     build_id: str,
+    sanitizer: str,
 ) -> str:
     template_path = CUR_DIR / "run-crs-compose.docker-compose.yaml.j2"
 
@@ -159,7 +160,7 @@ def render_run_crs_compose_docker_compose(
     exchange_dir = None
     for crs in crs_compose.crs_list:
         if not crs.config.is_builder:
-            exchange_dir = str(crs.get_exchange_dir(target, run_id))
+            exchange_dir = str(crs.get_exchange_dir(target, run_id, sanitizer))
             break
 
     context = {
@@ -171,6 +172,7 @@ def render_run_crs_compose_docker_compose(
         "target": target,
         "run_id": run_id,
         "build_id": build_id,
+        "sanitizer": sanitizer,
         "oss_crs_infra_root_path": str(OSS_CRS_ROOT_PATH / "oss-crs-infra"),
         "snapshot_image_tag": target.snapshot_image_tag or "",
         "resolve_dockerfile": _resolve_module_dockerfile,

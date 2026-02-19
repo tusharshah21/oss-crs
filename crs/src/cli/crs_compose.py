@@ -79,6 +79,12 @@ def add_build_target_command(subparsers):
         default="default",
         help="Build identifier used to isolate parallel builds (default: 'default').",
     )
+    build_target.add_argument(
+        "--sanitizer",
+        type=str,
+        default=None,
+        help="Sanitizer to use for build (default: from target config, usually 'address').",
+    )
 
 
 def add_run_command(subparsers):
@@ -104,6 +110,12 @@ def add_run_command(subparsers):
         type=str,
         default="default",
         help="Build identifier to use (default: 'default').",
+    )
+    run.add_argument(
+        "--sanitizer",
+        type=str,
+        default=None,
+        help="Sanitizer to use (default: from target config, usually 'address').",
     )
     run.add_argument(
         "--run-id",
@@ -154,6 +166,12 @@ def add_artifacts_command(subparsers):
         type=str,
         default="default",
         help="Build identifier (default: 'default').",
+    )
+    artifacts.add_argument(
+        "--sanitizer",
+        type=str,
+        default="address",
+        help="Sanitizer used for artifact paths (default: 'address').",
     )
     artifacts.add_argument(
         "--run-id",
@@ -241,6 +259,7 @@ def _select_run_id_interactively(crs_compose, target, harness: str | None) -> st
 def _handle_artifacts(args, crs_compose) -> bool:
     target = init_target_from_args(args)
     harness = target.target_harness
+    sanitizer = args.sanitizer
 
     # build_id for BUILD_OUT_DIR (default: "default")
     build_id = normalize_run_id(args.build_id)
@@ -258,7 +277,7 @@ def _handle_artifacts(args, crs_compose) -> bool:
 
     for crs in crs_compose.crs_list:
         # Build output uses build_id (don't create directories when just checking)
-        build_path = crs.get_build_output_dir(target, build_id=build_id, create=False)
+        build_path = crs.get_build_output_dir(target, build_id=build_id, sanitizer=sanitizer, create=False)
 
         crs_artifacts = CRSArtifacts(
             build=str(build_path) if build_path.exists() else None
@@ -266,17 +285,18 @@ def _handle_artifacts(args, crs_compose) -> bool:
 
         # Per-harness artifacts use run_id
         if harness:
-            submit_path = crs.get_submit_dir(target, run_id=run_id, create=False)
+            submit_path = crs.get_submit_dir(target, run_id=run_id, sanitizer=sanitizer, create=False)
             if submit_path.exists():
                 pov_path = submit_path / "pov"
                 seed_path = submit_path / "seed"
                 crs_artifacts.pov = str(pov_path) if pov_path.exists() else None
                 crs_artifacts.seed = str(seed_path) if seed_path.exists() else None
 
-            fetch_path = crs.get_fetch_dir(target, run_id=run_id, create=False)
-            crs_artifacts.fetch = str(fetch_path) if fetch_path.exists() else None
+            # Exchange dir is shared across all CRSs
+            exchange_path = crs.get_exchange_dir(target, run_id=run_id, sanitizer=sanitizer, create=False)
+            crs_artifacts.fetch = str(exchange_path) if exchange_path.exists() else None
 
-            shared_path = crs.get_shared_dir(target, run_id=run_id, create=False)
+            shared_path = crs.get_shared_dir(target, run_id=run_id, sanitizer=sanitizer, create=False)
             crs_artifacts.shared = str(shared_path) if shared_path.exists() else None
 
         output.crs[crs.name] = crs_artifacts
@@ -323,13 +343,13 @@ def cli() -> bool:
     elif args.command == "build-target":
         target = init_target_from_args(args)
         # Library normalizes build_id internally
-        if not crs_compose.build_target(target, build_id=args.build_id):
+        if not crs_compose.build_target(target, build_id=args.build_id, sanitizer=args.sanitizer):
             return False
     elif args.command == "run":
         target = init_target_from_args(args)
         if args.timeout is not None:
             crs_compose.set_deadline(time.monotonic() + args.timeout)
-        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, corpus_dir=args.corpus):
+        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id, sanitizer=args.sanitizer, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, corpus_dir=args.corpus):
             return False
     elif args.command == "artifacts":
         return _handle_artifacts(args, crs_compose)
