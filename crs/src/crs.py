@@ -55,7 +55,7 @@ class CRS:
     @classmethod
     def from_yaml_file(cls, crs_path: Path, work_dir: Path) -> "CRS":
         config = CRSConfig.from_yaml_file(crs_path / CRS_YAML_PATH)
-        return cls(config.name, crs_path, work_dir, None)
+        return cls(config.name, crs_path, work_dir, None, None)
 
     @classmethod
     def from_crs_compose_entry(
@@ -110,6 +110,9 @@ class CRS:
         Returns:
             True if bake succeeded, False otherwise.
         """
+        if self.config.prepare_phase is None:
+            return TaskResult(success=True)
+
         # Create a single-task progress if not provided
         standalone = multi_task_progress is None
         # Determine the registry to use (parameter overrides config)
@@ -183,15 +186,24 @@ class CRS:
         progress: MultiTaskProgress,
         build_id: str,
     ) -> "TaskResult":
+        if self.config.target_build_phase is None or not self.config.target_build_phase.builds:
+            return TaskResult(success=True)
         if not self.__is_supported_target(target):
             # TODO: warn instead of error?
             return TaskResult(
                 success=False,
                 error=f"Skipping target {target.name} for CRS {self.name} as it is not supported.",
             )
+        # Filter out snapshot builds — they are handled by target.create_snapshot()
+        # at the CRSCompose level, not by the docker-compose build pipeline
+        non_snapshot_builds = [
+            b for b in self.config.target_build_phase.builds if not b.snapshot
+        ]
+        if not non_snapshot_builds:
+            return TaskResult(success=True)
         target_key = target_base_image.replace(":", "_")
         build_work_dir = self.compose_work_dir / "builds" / build_id / "crs" / self.name / target_key
-        for build_config in self.config.target_build_phase.builds:
+        for build_config in non_snapshot_builds:
             build_name = build_config.name
             progress.add_task(
                 build_name,
@@ -216,13 +228,22 @@ class CRS:
         progress: MultiTaskProgress,
         build_id: str,
     ) -> TaskResult:
+        if self.config.target_build_phase is None or not self.config.target_build_phase.builds:
+            return TaskResult(success=True)
         if not self.__is_supported_target(target):
             return TaskResult(
                 success=False,
                 error=f"Skipping target {target.name} for CRS {self.name} as it is not supported.",
             )
+        # Filter out snapshot builds — snapshots produce Docker images, not files in
+        # the build-out directory, so they have no outputs to check here
+        non_snapshot_builds = [
+            b for b in self.config.target_build_phase.builds if not b.snapshot
+        ]
+        if not non_snapshot_builds:
+            return TaskResult(success=True)
         build_out_dir = self.get_build_output_dir(target, build_id=build_id)
-        for build_config in self.config.target_build_phase.builds:
+        for build_config in non_snapshot_builds:
             build_name = build_config.name
             progress.add_task(
                 f"Check build outputs for {build_name}",
@@ -276,27 +297,6 @@ class CRS:
             sub_work_dir.mkdir(parents=True, exist_ok=True)
         return sub_work_dir
 
-    def get_fetch_dir(self, target: Target, run_id: str | None = None, create: bool = True) -> Path:
-        """
-        New structure: runs/<run-id>/crs/<name>/<target>/FETCH_DIR/<harness>/
-
-        Args:
-            target: The target to get the fetch directory for.
-            run_id: Run identifier. If None, uses "default".
-            create: If True, creates the directory if it doesn't exist.
-        """
-        assert target.target_harness, (
-            "target_harness must be set for fetch dir"
-        )
-        target_key = self.__get_target_key(target)
-        if run_id:
-            sub_work_dir = self.compose_work_dir / "runs" / run_id / "crs" / self.name / target_key / "FETCH_DIR" / target.target_harness
-        else:
-            sub_work_dir = self.compose_work_dir / "runs" / "default" / "crs" / self.name / target_key / "FETCH_DIR" / target.target_harness
-        if create:
-            sub_work_dir.mkdir(parents=True, exist_ok=True)
-        return sub_work_dir
-
     def get_shared_dir(self, target: Target, run_id: str | None = None, create: bool = True) -> Path:
         """
         New structure: runs/<run-id>/crs/<name>/<target>/SHARED_DIR/<harness>/
@@ -317,6 +317,35 @@ class CRS:
         if create:
             sub_work_dir.mkdir(parents=True, exist_ok=True)
         return sub_work_dir
+
+    def get_exchange_dir(self, target: Target, run_id: str, create: bool = True) -> Path:
+        """Get the shared exchange directory (shared across ALL CRSs).
+
+        New structure: runs/<run-id>/EXCHANGE_DIR/<target>/<harness>/
+
+        CRS containers mount this as FETCH_DIR (read-only). The exchange
+        sidecar and host-side pre-population are the only writers.
+
+        Args:
+            target: The target to get the exchange directory for.
+            run_id: Run identifier (required, no default).
+            create: If True, creates the directory if it doesn't exist.
+        """
+        target_key = self.__get_target_key(target)
+        assert target.target_harness, (
+            "target_harness must be set for exchange dir"
+        )
+        exchange_dir = (
+            self.compose_work_dir
+            / "runs"
+            / run_id
+            / "EXCHANGE_DIR"
+            / target_key
+            / target.target_harness
+        )
+        if create:
+            exchange_dir.mkdir(parents=True, exist_ok=True)
+        return exchange_dir
 
     def get_snapshot_dir(self, target: Target, build_id: str | None = None, create: bool = True) -> Path:
         """

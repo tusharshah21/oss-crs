@@ -111,7 +111,30 @@ def add_run_command(subparsers):
         default=None,
         help="Run identifier for this run's artifacts. If not provided, generates timestamp-based id.",
     )
-
+    run.add_argument(
+        "--pov",
+        type=Path,
+        default=None,
+        help="Single POV file to pre-populate into FETCH_DIR before containers start",
+    )
+    run.add_argument(
+        "--pov-dir",
+        type=Path,
+        default=None,
+        help="Directory containing POV files to pre-populate into FETCH_DIR before containers start",
+    )
+    run.add_argument(
+        "--diff",
+        type=Path,
+        default=None,
+        help="Diff file for delta-mode analysis, pre-populated into FETCH_DIR before containers start. Accessible via: libCRS fetch diff <local_path>",
+    )
+    run.add_argument(
+        "--corpus",
+        type=Path,
+        default=None,
+        help="Directory of initial corpus/seed files, pre-populated into FETCH_DIR before containers start. Accessible via: libCRS fetch seed <local_path>",
+    )
 
 def add_artifacts_command(subparsers):
     artifacts = subparsers.add_parser(
@@ -306,9 +329,7 @@ def cli() -> bool:
         target = init_target_from_args(args)
         if args.timeout is not None:
             crs_compose.set_deadline(time.monotonic() + args.timeout)
-
-        # Library normalizes IDs internally
-        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id):
+        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, corpus_dir=args.corpus):
             return False
     elif args.command == "artifacts":
         return _handle_artifacts(args, crs_compose)
