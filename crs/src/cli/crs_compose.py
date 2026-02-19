@@ -197,17 +197,17 @@ def init_target_from_args(args) -> Target:
     )
 
 
-def _collect_run_ids_for_target(crs_compose, target, harness: str | None) -> list[str]:
+def _collect_run_ids_for_target(crs_compose, target, harness: str | None, sanitizer: str) -> list[str]:
     """Collect all run-ids for a target from SUBMIT_DIR (run artifacts).
 
-    New structure: runs/<run-id>/crs/<crs-name>/<target>/SUBMIT_DIR/<harness>/
+    Structure: <sanitizer>/runs/<run-id>/crs/<crs-name>/<target>/SUBMIT_DIR/<harness>/
     """
     import re
     target_base_image = target.get_docker_image_name()
     target_key = target_base_image.replace(":", "_")
     seen = set()
 
-    runs_dir = crs_compose.work_dir / "runs"
+    runs_dir = crs_compose.work_dir / sanitizer / "runs"
     if not runs_dir.exists():
         return []
 
@@ -244,9 +244,9 @@ def _format_run_id(run_id: str) -> str:
     return run_id
 
 
-def _select_run_id_interactively(crs_compose, target, harness: str | None) -> str | None:
+def _select_run_id_interactively(crs_compose, target, harness: str | None, sanitizer: str) -> str | None:
     """Prompt user to select a run-id from available runs."""
-    all_run_ids = _collect_run_ids_for_target(crs_compose, target, harness)
+    all_run_ids = _collect_run_ids_for_target(crs_compose, target, harness, sanitizer)
     if not all_run_ids:
         print("No runs found for this target.", file=sys.stderr)
         return None
@@ -261,14 +261,11 @@ def _handle_artifacts(args, crs_compose) -> bool:
     harness = target.target_harness
     sanitizer = args.sanitizer
 
-    # build_id for BUILD_OUT_DIR (default: "default")
-    build_id = normalize_run_id(args.build_id)
-
     # run_id for SUBMIT/FETCH/SHARED dirs - interactive selection if not provided
     if args.run_id:
         run_id = normalize_run_id(args.run_id)
     else:
-        run_id = _select_run_id_interactively(crs_compose, target, harness)
+        run_id = _select_run_id_interactively(crs_compose, target, harness, sanitizer)
         if run_id is None:
             return False
 
