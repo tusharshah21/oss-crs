@@ -6,51 +6,58 @@ import os
 from .config.crs import CRSConfig
 from .config.crs_compose import CRSEntry, CRSComposeEnv
 from .ui import MultiTaskProgress, TaskResult
-from .target import Target
+from .target import Target, file_lock
 from .templates import renderer
 from .utils import TmpDockerCompose, rm_with_docker
 
 CRS_YAML_PATH = "oss-crs/crs.yaml"
 
 
-def init_crs_repo(name, repo_url: str, branch: str, dest_path: Path) -> bool:
-    tasks = []
-    if dest_path.exists():
-        tasks = [
-            (
-                "Git Fetch",
-                lambda progress: progress.run_command_with_streaming_output(
+def init_crs_repo(name, repo_url: str, branch: str, dest_path: Path, skip_if_exists: bool = False) -> bool:
+    # Use file lock to prevent race conditions when multiple runs access same CRS repo
+    lock_path = dest_path.parent / f".{name}.lock"
+    with file_lock(lock_path):
+        # Skip init if repo exists and skip_if_exists is True
+        if skip_if_exists and dest_path.exists():
+            return True
+
+        tasks = []
+        if dest_path.exists():
+            tasks = [
+                (
+                    "Git Fetch",
+                    lambda progress: progress.run_command_with_streaming_output(
                     cmd=["git", "fetch", "--recurse-submodules", "origin", branch],
-                    cwd=dest_path,
+                        cwd=dest_path
+                    ),
                 ),
-            ),
-            (
-                "Git Reset",
-                lambda progress: progress.run_command_with_streaming_output(
-                    cmd=["git", "reset", "--hard", f"origin/{branch}"],
-                    cwd=dest_path,
+                (
+                    "Git Reset",
+                    lambda progress: progress.run_command_with_streaming_output(
+                        cmd=["git", "reset", "--hard", f"origin/{branch}"],
+                        cwd=dest_path,
+                    ),
                 ),
-            ),
-        ]
-    else:
-        tasks = [
-            (
-                "Cloning CRS repository",
-                lambda progress: progress.run_command_with_streaming_output(
-                    cmd=[
-                        "git",
-                        "clone",
-                        "--recurse-submodules",
-                        "--branch",
-                        branch,
-                        repo_url,
-                        str(dest_path),
-                    ]
+            ]
+        else:
+            tasks = [
+                (
+                    "Cloning CRS repository",
+                    lambda progress: progress.run_command_with_streaming_output(
+                        cmd=[
+                            "git",
+                            "clone",
+                            "--recurse-submodules",
+                            "--branch",
+                            branch,
+                            repo_url,
+                            str(dest_path),
+                        ]
+                    ),
                 ),
-            ),
-        ]
-    with MultiTaskProgress(tasks, title=f"Init CRS: {name}") as progress:
-        return progress.run_added_tasks().success
+            ]
+        with MultiTaskProgress(tasks, title=f"Init CRS: {name}") as progress:
+            return progress.run_added_tasks().success
 
 
 class CRS:
@@ -66,6 +73,7 @@ class CRS:
         entry: CRSEntry,
         work_dir: Path,
         crs_compose_env: CRSComposeEnv,
+        skip_init: bool = False,
     ) -> "CRS":
         if entry.source.local_path:
             return cls(
@@ -73,7 +81,7 @@ class CRS:
             )
         else:
             path = work_dir / "../crs_src" / name
-            if init_crs_repo(name, entry.source.url, entry.source.ref, path):
+            if init_crs_repo(name, entry.source.url, entry.source.ref, path, skip_if_exists=skip_init):
                 return cls(name, path, work_dir, entry, crs_compose_env)
         raise ValueError(f"Failed to initialize CRS from entry: {name}")
 
@@ -88,8 +96,9 @@ class CRS:
         self.name = name
         self.crs_path = crs_path.expanduser().resolve()
         self.config = CRSConfig.from_yaml_file(self.crs_path / CRS_YAML_PATH)
-        self.work_dir = work_dir / "crs" / self.name
-        self.work_dir.mkdir(parents=True, exist_ok=True)
+        # Store the compose work_dir (the <hash>/ directory) for new directory structure
+        self.compose_work_dir = work_dir
+        self.compose_work_dir.mkdir(parents=True, exist_ok=True)
         self.resource = resource
         self.crs_compose_env = crs_compose_env
 
@@ -180,7 +189,12 @@ class CRS:
         return True
 
     def build_target(
-        self, target: Target, target_base_image: str, progress: MultiTaskProgress
+        self,
+        target: Target,
+        target_base_image: str,
+        progress: MultiTaskProgress,
+        build_id: str,
+        sanitizer: str,
     ) -> "TaskResult":
         if self.config.target_build_phase is None or not self.config.target_build_phase.builds:
             return TaskResult(success=True)
@@ -197,7 +211,8 @@ class CRS:
         ]
         if not non_snapshot_builds:
             return TaskResult(success=True)
-        build_work_dir = self.work_dir / (target_base_image.replace(":", "_"))
+        target_key = target_base_image.replace(":", "_")
+        build_work_dir = self.compose_work_dir / sanitizer / "builds" / build_id / "crs" / self.name / target_key
         for build_config in non_snapshot_builds:
             build_name = build_config.name
             progress.add_task(
@@ -209,6 +224,8 @@ class CRS:
                         build_name,
                         build_config,
                         build_work_dir,
+                        build_id,
+                        sanitizer,
                         p,
                     )
                 ),
@@ -216,7 +233,12 @@ class CRS:
         return progress.run_added_tasks()
 
     def is_target_built(
-        self, target: Target, target_base_image: str, progress: MultiTaskProgress
+        self,
+        target: Target,
+        target_base_image: str,
+        progress: MultiTaskProgress,
+        build_id: str,
+        sanitizer: str,
     ) -> TaskResult:
         if self.config.target_build_phase is None or not self.config.target_build_phase.builds:
             return TaskResult(success=True)
@@ -232,7 +254,7 @@ class CRS:
         ]
         if not non_snapshot_builds:
             return TaskResult(success=True)
-        build_out_dir = self.get_build_output_dir(target)
+        build_out_dir = self.get_build_output_dir(target, build_id=build_id, sanitizer=sanitizer)
         for build_config in non_snapshot_builds:
             build_name = build_config.name
             progress.add_task(
@@ -245,55 +267,112 @@ class CRS:
             )
         return progress.run_added_tasks()
 
-    def __get_sub_work_dir(
-        self, target: Target, sub_dir_name: str, per_harness=False
-    ) -> Path:
-        target_image_name = target.get_docker_image_name().replace(":", "_")
-        if per_harness:
-            assert target.target_harness, (
-                "target_harness must be set for per_harness sub work dir"
-            )
-            sub_work_dir = (
-                self.work_dir / target_image_name / sub_dir_name / target.target_harness
-            )
-        else:
-            sub_work_dir = self.work_dir / target_image_name / sub_dir_name
-        sub_work_dir.mkdir(parents=True, exist_ok=True)
+    def __get_target_key(self, target: Target) -> str:
+        return target.get_docker_image_name().replace(":", "_")
+
+    def get_build_output_dir(self, target: Target, build_id: str, sanitizer: str, create: bool = True) -> Path:
+        """
+        New structure: <sanitizer>/builds/<build-id>/crs/<name>/<target>/BUILD_OUT_DIR/
+
+        Args:
+            target: The target to get the build output directory for.
+            build_id: Build identifier.
+            sanitizer: Sanitizer type (e.g., "address", "undefined").
+            create: If True, creates the directory if it doesn't exist.
+        """
+        target_key = self.__get_target_key(target)
+        sub_work_dir = self.compose_work_dir / sanitizer / "builds" / build_id / "crs" / self.name / target_key / "BUILD_OUT_DIR"
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
         return sub_work_dir
 
-    def get_build_output_dir(self, target: Target) -> Path:
-        return self.__get_sub_work_dir(target, "BUILD_OUT_DIR")
+    def get_submit_dir(self, target: Target, run_id: str, sanitizer: str, create: bool = True) -> Path:
+        """
+        New structure: <sanitizer>/runs/<run-id>/crs/<name>/<target>/SUBMIT_DIR/<harness>/
 
-    def get_submit_dir(self, target: Target) -> Path:
-        return self.__get_sub_work_dir(target, "SUBMIT_DIR", per_harness=True)
+        Args:
+            target: The target to get the submit directory for.
+            run_id: Run identifier.
+            sanitizer: Sanitizer type (e.g., "address", "undefined").
+            create: If True, creates the directory if it doesn't exist.
+        """
+        assert target.target_harness, (
+            "target_harness must be set for submit dir"
+        )
+        target_key = self.__get_target_key(target)
+        sub_work_dir = self.compose_work_dir / sanitizer / "runs" / run_id / "crs" / self.name / target_key / "SUBMIT_DIR" / target.target_harness
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
+        return sub_work_dir
 
-    def get_shared_dir(self, target: Target) -> Path:
-        return self.__get_sub_work_dir(target, "SHARED_DIR", per_harness=True)
+    def get_shared_dir(self, target: Target, run_id: str, sanitizer: str, create: bool = True) -> Path:
+        """
+        New structure: <sanitizer>/runs/<run-id>/crs/<name>/<target>/SHARED_DIR/<harness>/
 
-    def get_exchange_dir(self, target: Target) -> Path:
+        Args:
+            target: The target to get the shared directory for.
+            run_id: Run identifier.
+            sanitizer: Sanitizer type (e.g., "address", "undefined").
+            create: If True, creates the directory if it doesn't exist.
+        """
+        assert target.target_harness, (
+            "target_harness must be set for shared dir"
+        )
+        target_key = self.__get_target_key(target)
+        sub_work_dir = self.compose_work_dir / sanitizer / "runs" / run_id / "crs" / self.name / target_key / "SHARED_DIR" / target.target_harness
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
+        return sub_work_dir
+
+    def get_exchange_dir(self, target: Target, run_id: str, sanitizer: str, create: bool = True) -> Path:
         """Get the shared exchange directory (shared across ALL CRSs).
 
-        Navigates up from per-CRS work_dir (work_dir/crs/<name>) to compose
-        work_dir (work_dir), then into EXCHANGE_DIR/<target>/<harness>/.
+        New structure: <sanitizer>/runs/<run-id>/EXCHANGE_DIR/<target>/<harness>/
 
         CRS containers mount this as FETCH_DIR (read-only). The exchange
         sidecar and host-side pre-population are the only writers.
+
+        Args:
+            target: The target to get the exchange directory for.
+            run_id: Run identifier (required, no default).
+            sanitizer: Sanitizer type (e.g., "address", "undefined").
+            create: If True, creates the directory if it doesn't exist.
         """
-        target_image_name = target.get_docker_image_name().replace(":", "_")
+        target_key = self.__get_target_key(target)
         assert target.target_harness, (
             "target_harness must be set for exchange dir"
         )
         exchange_dir = (
-            self.work_dir.parent.parent
+            self.compose_work_dir
+            / sanitizer
+            / "runs"
+            / run_id
             / "EXCHANGE_DIR"
-            / target_image_name
+            / target_key
             / target.target_harness
         )
-        exchange_dir.mkdir(parents=True, exist_ok=True)
+        if create:
+            exchange_dir.mkdir(parents=True, exist_ok=True)
         return exchange_dir
 
-    def cleanup_shared_dir(self, target: Target) -> bool:
-        dir_path = self.__get_sub_work_dir(target, "SHARED_DIR", per_harness=True)
+    def get_snapshot_dir(self, target: Target, build_id: str, sanitizer: str, create: bool = True) -> Path:
+        """
+        New structure: <sanitizer>/builds/<build-id>/targets/<target>/snapshot-out-<sanitizer>/
+
+        Args:
+            target: The target to get the snapshot directory for.
+            build_id: Build identifier.
+            sanitizer: Sanitizer type (e.g., "address", "undefined").
+            create: If True, creates the directory if it doesn't exist.
+        """
+        target_key = self.__get_target_key(target)
+        sub_work_dir = self.compose_work_dir / sanitizer / "builds" / build_id / "targets" / target_key / f"snapshot-out-{sanitizer}"
+        if create:
+            sub_work_dir.mkdir(parents=True, exist_ok=True)
+        return sub_work_dir
+
+    def cleanup_shared_dir(self, target: Target, run_id: str, sanitizer: str) -> bool:
+        dir_path = self.get_shared_dir(target, run_id, sanitizer)
         rm_with_docker(dir_path)
         return True
 
@@ -334,17 +413,24 @@ class CRS:
         build_name: str,
         build_config,
         build_work_dir: Path,
+        build_id: str,
+        sanitizer: str,
         progress: MultiTaskProgress,
     ) -> "TaskResult":
-        build_out_dir = self.get_build_output_dir(target)
-        build_cache_path = build_work_dir / f".{build_name}.cache"
+        build_out_dir = self.get_build_output_dir(target, build_id=build_id, sanitizer=sanitizer)
+        build_cache_path = build_out_dir / f".{build_name}.cache"
         docker_compose_output = ""
 
         def prepare_docker_compose_file(
             progress, project_name: str, tmp_docker_compose: TmpDockerCompose
         ) -> "TaskResult":
             rendered = renderer.render_build_target_docker_compose(
-                self, target, target_base_image, build_config, build_out_dir
+                self,
+                target,
+                target_base_image,
+                build_config,
+                build_out_dir,
+                build_id,
             )
             tmp_docker_compose.docker_compose.write_text(rendered)
             return TaskResult(success=True)

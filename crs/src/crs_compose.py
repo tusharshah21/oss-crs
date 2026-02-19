@@ -8,16 +8,16 @@ from .crs import CRS
 from .ui import MultiTaskProgress, TaskResult
 from .target import Target
 from .templates import renderer
-from .utils import TmpDockerCompose, rm_with_docker
+from .utils import TmpDockerCompose, normalize_run_id, generate_run_id, rm_with_docker
 
 
 class CRSCompose:
     @classmethod
-    def from_yaml_file(cls, compose_file: Path, work_dir: Path) -> "CRSCompose":
+    def from_yaml_file(cls, compose_file: Path, work_dir: Path, skip_crs_init: bool = False) -> "CRSCompose":
         config = CRSComposeConfig.from_yaml_file(compose_file)
-        return cls(config, work_dir)
+        return cls(config, work_dir, skip_crs_init=skip_crs_init)
 
-    def __init__(self, config: CRSComposeConfig, work_dir: Path):
+    def __init__(self, config: CRSComposeConfig, work_dir: Path, skip_crs_init: bool = False):
         hash = config.md5_hash()
         self.config = config
         self.llm = LLM(self.config.llm_config)
@@ -26,7 +26,7 @@ class CRSCompose:
         self.crs_compose_env = CRSComposeEnv(self.config.run_env)
         self.crs_list = [
             CRS.from_crs_compose_entry(
-                name, crs_cfg, self.work_dir, self.crs_compose_env
+                name, crs_cfg, self.work_dir, self.crs_compose_env, skip_init=skip_crs_init
             )
             for name, crs_cfg in self.config.crs_entries.items()
         ]
@@ -56,6 +56,49 @@ class CRSCompose:
 
     def set_deadline(self, deadline: float) -> None:
         self.deadline = deadline
+
+    def get_latest_build_id(self, target: Target, sanitizer: str) -> str | None:
+        """Find the latest build-id (by unix timestamp) for the given target and sanitizer.
+
+        Structure: <sanitizer>/builds/<build-id>/crs/<crs-name>/<target>/BUILD_OUT_DIR/
+        """
+        import re
+        target_base_image = target.get_docker_image_name()
+        target_key = target_base_image.replace(":", "_")
+        latest_build_id = None
+        latest_ts = 0
+
+        builds_dir = self.work_dir / sanitizer / "builds"
+        if not builds_dir.exists():
+            return None
+
+        for build_id_dir in builds_dir.iterdir():
+            if not build_id_dir.is_dir():
+                continue
+            build_id = build_id_dir.name
+            # Check if any CRS has build output for this target
+            for crs in self.crs_list:
+                build_out_dir = build_id_dir / "crs" / crs.name / target_key / "BUILD_OUT_DIR"
+                if build_out_dir.exists():
+                    # Extract first 10-digit sequence (unix timestamp) from build_id
+                    match = re.search(r'\d{10}', build_id)
+                    if match:
+                        ts = int(match.group())
+                        if ts > latest_ts:
+                            latest_ts = ts
+                            latest_build_id = build_id
+                    break  # Found at least one CRS with this build, no need to check others
+        return latest_build_id
+
+    def get_build_id_for_run(self, run_id: str, sanitizer: str) -> str | None:
+        """Get the build-id that was used for a specific run.
+
+        Reads from: <sanitizer>/runs/<run-id>/BUILD_ID
+        """
+        build_id_file = self.work_dir / sanitizer / "runs" / run_id / "BUILD_ID"
+        if build_id_file.exists():
+            return build_id_file.read_text().strip()
+        return None
 
     def __prepare_oss_crs_infra(
         self, publish: bool = False, docker_registry: str = None
@@ -91,7 +134,13 @@ class CRSCompose:
         ) as progress:
             return progress.run_added_tasks().success
 
-    def build_target(self, target: Target) -> bool:
+        return True
+
+    def build_target(self, target: Target, build_id: str | None = None, sanitizer: str | None = None) -> bool:
+        # Normalize build_id at library boundary; generate timestamp-based ID if not provided
+        build_id = normalize_run_id(build_id) if build_id else generate_run_id()
+        sanitizer = sanitizer if sanitizer else self._get_sanitizer(target)
+
         target_base_image = target.build_docker_image()
         if target_base_image is None:
             return False
@@ -102,24 +151,23 @@ class CRSCompose:
         if self._any_needs_snapshot:
             # Collect unique sanitizers from all snapshot builds across all CRSes
             snapshot_sanitizers: set[str] = set()
-            default_sanitizer = self._get_sanitizer(target)
 
             for crs in self.crs_list:
                 for build_config in crs.config.snapshot_builds:
-                    sanitizer = build_config.additional_env.get(
-                        "SANITIZER", default_sanitizer
+                    snap_sanitizer = build_config.additional_env.get(
+                        "SANITIZER", sanitizer
                     )
-                    snapshot_sanitizers.add(sanitizer)
+                    snapshot_sanitizers.add(snap_sanitizer)
 
             # Old-style builder CRS also triggers a snapshot
             if self._builder_crs is not None and not snapshot_sanitizers:
-                snapshot_sanitizers.add(default_sanitizer)
+                snapshot_sanitizers.add(sanitizer)
 
-            for sanitizer in sorted(snapshot_sanitizers):
+            for snap_sanitizer in sorted(snapshot_sanitizers):
                 tasks.append(
                     (
-                        f"Create snapshot ({sanitizer})",
-                        lambda p, s=sanitizer: target.create_snapshot(s, p),
+                        f"Create snapshot ({snap_sanitizer})",
+                        lambda p, s=snap_sanitizer: target.create_snapshot(s, p),
                     )
                 )
 
@@ -128,7 +176,7 @@ class CRSCompose:
                 (
                     crs.name,
                     lambda progress, crs=crs: crs.build_target(
-                        target, target_base_image, progress
+                        target, target_base_image, progress, build_id, sanitizer
                     ),
                 )
             )
@@ -138,14 +186,30 @@ class CRSCompose:
         ) as progress:
             return progress.run_added_tasks().success
 
+        return True
     def run(
         self,
         target: Target,
+        run_id: str | None = None,
+        build_id: str | None = None,
+        sanitizer: str | None = None,
         pov: Optional[Path] = None,
         pov_dir: Optional[Path] = None,
         diff: Optional[Path] = None,
         corpus_dir: Optional[Path] = None,
     ) -> bool:
+        # Normalize IDs at library boundary
+        run_id = normalize_run_id(run_id) if run_id else generate_run_id()
+        sanitizer = sanitizer if sanitizer else self._get_sanitizer(target)
+
+        # Determine build_id: use provided, find latest, or generate new
+        if build_id:
+            build_id = normalize_run_id(build_id)
+        else:
+            # Look for latest existing build for this target/sanitizer
+            build_id = self.get_latest_build_id(target, sanitizer)
+            # build_id may be None if no builds exist yet
+
         if diff is not None and not diff.is_file():
             print(f"Error: Diff file does not exist: {diff}")
             return False
@@ -155,11 +219,16 @@ class CRSCompose:
         if not self.__validate_before_run(target):
             return False
         target.init_repo()
-        need_build = not self.__check_target_built(target)
+
+        # Check if we need to build
+        if build_id:
+            need_build = not self.__check_target_built(target, build_id, sanitizer)
+        else:
+            need_build = True  # No builds exist yet
 
         # Also check if snapshot image exists when any CRS needs a snapshot
         if not need_build and self._any_needs_snapshot:
-            snapshot_tag = target.get_snapshot_image_name(self._get_sanitizer(target))
+            snapshot_tag = target.get_snapshot_image_name(sanitizer)
             check = subprocess.run(
                 ["docker", "image", "inspect", snapshot_tag],
                 capture_output=True, text=True,
@@ -168,15 +237,16 @@ class CRSCompose:
                 need_build = True
 
         if need_build:
-            if not self.build_target(target):
+            # Generate new build_id if we don't have one
+            if not build_id:
+                build_id = generate_run_id()
+            if not self.build_target(target, build_id, sanitizer):
                 return False
 
         # Ensure snapshot_image_tag is set for the run phase, even if
         # build_target() was skipped because the target was already built.
         if self._any_needs_snapshot and target.snapshot_image_tag is None:
-            target.snapshot_image_tag = target.get_snapshot_image_name(
-                self._get_sanitizer(target)
-            )
+            target.snapshot_image_tag = target.get_snapshot_image_name(sanitizer)
 
         # Collect POV files from --pov and --pov-dir
         pov_files: list[Path] = []
@@ -185,7 +255,15 @@ class CRSCompose:
         if pov_dir is not None:
             pov_files.extend(f for f in pov_dir.iterdir() if f.is_file())
 
-        return self.__run(target, pov_files, diff_path=diff, corpus_dir=corpus_dir)
+        # build_id is guaranteed to be set at this point (either found or generated)
+        assert build_id is not None
+
+        # Write build_id to run directory for later retrieval (e.g., by artifacts command)
+        run_dir = self.work_dir / sanitizer / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "BUILD_ID").write_text(build_id)
+
+        return self.__run(target, run_id=run_id, build_id=build_id, sanitizer=sanitizer, pov_files=pov_files, diff_path=diff, corpus_dir=corpus_dir)
 
     def __validate_before_run(self, target: Target) -> bool:
         tasks = [
@@ -204,7 +282,9 @@ class CRSCompose:
         ) as progress:
             return progress.run_added_tasks().success
 
-    def __check_target_built(self, target: Target) -> bool:
+        return True
+
+    def __check_target_built(self, target: Target, build_id: str, sanitizer: str) -> bool:
         target_base_image = target.get_docker_image_name()
         tasks = []
         for crs in self.crs_list:
@@ -212,7 +292,7 @@ class CRSCompose:
                 (
                     crs.name,
                     lambda progress, crs=crs: crs.is_target_built(
-                        target, target_base_image, progress
+                        target, target_base_image, progress, build_id, sanitizer
                     ),
                 )
             )
@@ -222,26 +302,42 @@ class CRSCompose:
         ) as progress:
             return progress.run_added_tasks().success
 
-    def __run(self, target: Target, pov_files: list[Path] = None, diff_path: Optional[Path] = None, corpus_dir: Optional[Path] = None) -> bool:
+        return True
+
+    def __run(self, target: Target, run_id: str, build_id: str, sanitizer: str, pov_files: list[Path] | None = None, diff_path: Optional[Path] = None, corpus_dir: Optional[Path] = None) -> bool:
         if self.crs_compose_env.run_env == RunEnv.LOCAL:
-            return self.__run_local(target, pov_files or [], diff_path=diff_path, corpus_dir=corpus_dir)
+            return self.__run_local(
+                target,
+                run_id=run_id,
+                build_id=build_id,
+                sanitizer=sanitizer,
+                pov_files=pov_files or [],
+                diff_path=diff_path,
+                corpus_dir=corpus_dir
+            )
         else:
             print(f"TODO: Support run env {self.crs_compose_env.run_env}")
             return False
 
-    def __run_local(self, target: Target, pov_files: list[Path] = None, diff_path: Optional[Path] = None, corpus_dir: Optional[Path] = None) -> bool:
+    def __run_local(self, target: Target, run_id: str, build_id: str, sanitizer: str, pov_files: list[Path] | None = None, diff_path: Optional[Path] = None, corpus_dir: Optional[Path] = None) -> bool:
         with MultiTaskProgress(
             tasks=[],
             title="CRS Compose Run",
             deadline=self.deadline,
         ) as progress:
-            with TmpDockerCompose(progress, "crs_compose") as tmp_docker_compose:
+            with TmpDockerCompose(
+                progress, "crs_compose", run_id=run_id
+            ) as tmp_docker_compose:
                 project_name = tmp_docker_compose.project_name
+                actual_run_id = tmp_docker_compose.run_id
+                assert project_name is not None
+                assert actual_run_id is not None
                 tasks = [
                     (
                         "Prepare Running Environment",
                         lambda progress: self.__prepare_local_running_env(
-                            project_name, target, tmp_docker_compose, progress,
+                            project_name, target, tmp_docker_compose,
+                            actual_run_id, build_id, sanitizer, progress,
                             pov_files=pov_files or [],
                             diff_path=diff_path,
                             corpus_dir=corpus_dir,
@@ -257,13 +353,15 @@ class CRSCompose:
                 progress.add_tasks(tasks)
                 ret = progress.run_added_tasks()
                 if ret.success or ret.interrupted:
-                    self.__show_result_local(target, progress)
+                    self.__show_result_local(target, actual_run_id, sanitizer, progress)
                     return ret.success
                 return False
 
-    def __show_result_local(self, target: Target, progress: MultiTaskProgress) -> None:
+        return False
+
+    def __show_result_local(self, target: Target, run_id: str, sanitizer: str, progress: MultiTaskProgress) -> None:
         crs_results = [
-            {"name": crs.name, "submit_dir": crs.get_submit_dir(target)}
+            {"name": crs.name, "submit_dir": crs.get_submit_dir(target, run_id=run_id, sanitizer=sanitizer)}
             for crs in self.crs_list
         ]
         return progress.show_run_result(crs_results)
@@ -273,8 +371,11 @@ class CRSCompose:
         project_name: str,
         target: Target,
         tmp_docker_compose: TmpDockerCompose,
+        run_id: str,
+        build_id: str,
+        sanitizer: str,
         progress: MultiTaskProgress,
-        pov_files: list[Path] = None,
+        pov_files: list[Path] | None = None,
         diff_path: Optional[Path] = None,
         corpus_dir: Optional[Path] = None,
     ) -> TaskResult:
@@ -284,6 +385,9 @@ class CRSCompose:
                 tmp_docker_compose,
                 project_name,
                 target,
+                run_id,
+                build_id=build_id,
+                sanitizer=sanitizer,
             )
             tmp_docker_compose.docker_compose.write_text(content)
             return TaskResult(success=True)
@@ -291,7 +395,7 @@ class CRSCompose:
         def cleanup_exchange_dir(progress: MultiTaskProgress) -> TaskResult:
             # Exchange dir is shared across all CRSs — use any CRS to get the path
             if self.crs_list:
-                exchange_dir = self.crs_list[0].get_exchange_dir(target)
+                exchange_dir = self.crs_list[0].get_exchange_dir(target, run_id, sanitizer)
                 rm_with_docker(exchange_dir)
             return TaskResult(success=True)
 
@@ -300,7 +404,7 @@ class CRSCompose:
                 progress.add_task(
                     f"Clean up shared directory for {crs.name}",
                     lambda progress, crs=crs: TaskResult(
-                        success=crs.cleanup_shared_dir(target)
+                        success=crs.cleanup_shared_dir(target, run_id=run_id, sanitizer=sanitizer)
                     ),
                 )
             return progress.run_added_tasks()
@@ -309,7 +413,7 @@ class CRSCompose:
             # All CRSs share the same exchange dir — use the first non-builder CRS
             for crs in self.crs_list:
                 if not crs.config.is_builder:
-                    return crs.get_exchange_dir(target)
+                    return crs.get_exchange_dir(target, run_id, sanitizer)
             raise ValueError("No non-builder CRS found")
 
         def copy_povs(progress: MultiTaskProgress) -> TaskResult:

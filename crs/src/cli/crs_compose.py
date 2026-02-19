@@ -2,10 +2,14 @@ import sys
 import time
 import signal
 import argparse
+import datetime
 from pathlib import Path
 from dotenv import load_dotenv
+import questionary
 from ..crs_compose import CRSCompose
 from ..target import Target
+from ..utils import normalize_run_id
+from ..config.artifacts import ArtifactsOutput, CRSArtifacts
 
 
 DEFAULT_WORK_DIR = (Path(__file__) / "../../../../.oss-crs-workdir").resolve()
@@ -69,6 +73,18 @@ def add_build_target_command(subparsers):
     )
     add_common_arguments(build_target)
     add_target_arguments(build_target)
+    build_target.add_argument(
+        "--build-id",
+        type=str,
+        default=None,
+        help="Build identifier used to isolate parallel builds (default: generates timestamp-based ID).",
+    )
+    build_target.add_argument(
+        "--sanitizer",
+        type=str,
+        default=None,
+        help="Sanitizer to use for build (default: from target config, usually 'address').",
+    )
 
 
 def add_run_command(subparsers):
@@ -88,6 +104,24 @@ def add_run_command(subparsers):
         type=int,
         default=None,
         help="Maximum run duration in seconds. Gracefully stops all containers when exceeded.",
+    )
+    run.add_argument(
+        "--build-id",
+        type=str,
+        default=None,
+        help="Build identifier to use (default: uses latest build, or generates new if none exists).",
+    )
+    run.add_argument(
+        "--sanitizer",
+        type=str,
+        default=None,
+        help="Sanitizer to use (default: from target config, usually 'address').",
+    )
+    run.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Run identifier for this run's artifacts. If not provided, generates timestamp-based id.",
     )
     run.add_argument(
         "--pov",
@@ -114,6 +148,39 @@ def add_run_command(subparsers):
         help="Directory of initial corpus/seed files, pre-populated into FETCH_DIR before containers start. Accessible via: libCRS fetch seed <local_path>",
     )
 
+def add_artifacts_command(subparsers):
+    artifacts = subparsers.add_parser(
+        "artifacts", help="Show directories for run artifacts (JSON output)"
+    )
+    add_common_arguments(artifacts)
+    add_target_arguments(artifacts)
+    artifacts.add_argument(
+        "--target-harness",
+        type=str,
+        required=False,
+        default=None,
+        help="Specify the target harness (required for submit/fetch/shared dirs)",
+    )
+    artifacts.add_argument(
+        "--build-id",
+        type=str,
+        default=None,
+        help="Build identifier (default: uses latest build).",
+    )
+    artifacts.add_argument(
+        "--sanitizer",
+        type=str,
+        default="address",
+        help="Sanitizer used for artifact paths (default: 'address').",
+    )
+    artifacts.add_argument(
+        "--run-id",
+        type=str,
+        required=False,
+        default=None,
+        help="Run identifier to look up artifacts for (interactive selection if omitted)",
+    )
+
 
 def add_check_command(subparsers):
     pass
@@ -130,12 +197,130 @@ def init_target_from_args(args) -> Target:
     )
 
 
+def _collect_run_ids_for_target(crs_compose, target, harness: str | None, sanitizer: str) -> list[str]:
+    """Collect all run-ids for a target from SUBMIT_DIR (run artifacts).
+
+    Structure: <sanitizer>/runs/<run-id>/crs/<crs-name>/<target>/SUBMIT_DIR/<harness>/
+    """
+    import re
+    target_base_image = target.get_docker_image_name()
+    target_key = target_base_image.replace(":", "_")
+    seen = set()
+
+    runs_dir = crs_compose.work_dir / sanitizer / "runs"
+    if not runs_dir.exists():
+        return []
+
+    for run_id_dir in runs_dir.iterdir():
+        if not run_id_dir.is_dir():
+            continue
+        run_id = run_id_dir.name
+        # Check if any CRS has submit output for this target
+        for crs in crs_compose.crs_list:
+            if harness:
+                submit_path = run_id_dir / "crs" / crs.name / target_key / "SUBMIT_DIR" / harness
+            else:
+                submit_path = run_id_dir / "crs" / crs.name / target_key / "SUBMIT_DIR"
+            if submit_path.exists():
+                seen.add(run_id)
+                break  # Found at least one CRS with this run, no need to check others
+
+    # Sort by timestamp (extract 10-digit sequences), newest first
+    def extract_ts(run_id: str) -> int:
+        match = re.search(r'\d{10}', run_id)
+        return int(match.group()) if match else 0
+
+    return sorted(seen, key=extract_ts, reverse=True)
+
+
+def _format_run_id(run_id: str) -> str:
+    """Format a run-id for display. Extract unix timestamp and show human-readable time."""
+    import re
+    match = re.search(r'\d{10}', run_id)
+    if match:
+        ts = int(match.group())
+        dt = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        return f"{dt}  ({run_id})"
+    return run_id
+
+
+def _select_run_id_interactively(crs_compose, target, harness: str | None, sanitizer: str) -> str | None:
+    """Prompt user to select a run-id from available runs."""
+    all_run_ids = _collect_run_ids_for_target(crs_compose, target, harness, sanitizer)
+    if not all_run_ids:
+        print("No runs found for this target.", file=sys.stderr)
+        return None
+
+    choices = [questionary.Choice(title=_format_run_id(r), value=r) for r in all_run_ids]
+    selected = questionary.select("Select run-id:", choices=choices).ask()
+    return selected
+
+
+def _handle_artifacts(args, crs_compose) -> bool:
+    target = init_target_from_args(args)
+    harness = target.target_harness
+    sanitizer = args.sanitizer
+
+    # run_id for SUBMIT/FETCH/SHARED dirs - interactive selection if not provided
+    if args.run_id:
+        run_id = normalize_run_id(args.run_id)
+    else:
+        run_id = _select_run_id_interactively(crs_compose, target, harness, sanitizer)
+        if run_id is None:
+            return False
+
+    # build_id for BUILD_OUT_DIR - use provided, read from run, or find latest
+    if args.build_id:
+        build_id = normalize_run_id(args.build_id)
+    else:
+        # Try to get build_id from the run directory first
+        build_id = crs_compose.get_build_id_for_run(run_id, sanitizer)
+        if build_id is None:
+            # Fall back to latest build
+            build_id = crs_compose.get_latest_build_id(target, sanitizer)
+        if build_id is None:
+            print("No builds found for this target/sanitizer.", file=sys.stderr)
+            return False
+
+    # Build structured result
+    output = ArtifactsOutput(build_id=build_id, run_id=run_id)
+
+    for crs in crs_compose.crs_list:
+        # Build output uses build_id (don't create directories when just checking)
+        build_path = crs.get_build_output_dir(target, build_id=build_id, sanitizer=sanitizer, create=False)
+
+        crs_artifacts = CRSArtifacts(
+            build=str(build_path) if build_path.exists() else None
+        )
+
+        # Per-harness artifacts use run_id
+        if harness:
+            submit_path = crs.get_submit_dir(target, run_id=run_id, sanitizer=sanitizer, create=False)
+            if submit_path.exists():
+                pov_path = submit_path / "pov"
+                seed_path = submit_path / "seed"
+                crs_artifacts.pov = str(pov_path) if pov_path.exists() else None
+                crs_artifacts.seed = str(seed_path) if seed_path.exists() else None
+
+            # Exchange dir is shared across all CRSs
+            exchange_path = crs.get_exchange_dir(target, run_id=run_id, sanitizer=sanitizer, create=False)
+            crs_artifacts.fetch = str(exchange_path) if exchange_path.exists() else None
+
+            shared_path = crs.get_shared_dir(target, run_id=run_id, sanitizer=sanitizer, create=False)
+            crs_artifacts.shared = str(shared_path) if shared_path.exists() else None
+
+        output.crs[crs.name] = crs_artifacts
+
+    print(output.to_json())
+    return True
+
+
 def _sigterm_handler(signum, frame):
     """Convert SIGTERM into KeyboardInterrupt so cleanup tasks can run."""
     raise KeyboardInterrupt("SIGTERM received")
 
 
-def main() -> bool:
+def cli() -> bool:
     signal.signal(signal.SIGTERM, _sigterm_handler)
     load_dotenv()
     parser = argparse.ArgumentParser(
@@ -147,6 +332,7 @@ def main() -> bool:
     add_prepare_command(subparsers)
     add_build_target_command(subparsers)
     add_run_command(subparsers)
+    add_artifacts_command(subparsers)
     add_check_command(subparsers)
 
     args = parser.parse_args()
@@ -157,25 +343,34 @@ def main() -> bool:
         if isinstance(value, Path):
             setattr(args, key, value.expanduser().resolve())
 
-    crs_compose = CRSCompose.from_yaml_file(args.compose_file, args.work_dir)
+    # Skip CRS repo init for commands that don't need it
+    skip_crs_init = args.command == "artifacts"
+    crs_compose = CRSCompose.from_yaml_file(args.compose_file, args.work_dir, skip_crs_init=skip_crs_init)
 
     if args.command == "prepare":
         if not crs_compose.prepare(publish=args.publish):
             return False
     elif args.command == "build-target":
         target = init_target_from_args(args)
-        if not crs_compose.build_target(target):
+        # Library normalizes build_id internally
+        if not crs_compose.build_target(target, build_id=args.build_id, sanitizer=args.sanitizer):
             return False
     elif args.command == "run":
         target = init_target_from_args(args)
         if args.timeout is not None:
             crs_compose.set_deadline(time.monotonic() + args.timeout)
-        if not crs_compose.run(target, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, corpus_dir=args.corpus):
+        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id, sanitizer=args.sanitizer, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, corpus_dir=args.corpus):
             return False
+    elif args.command == "artifacts":
+        return _handle_artifacts(args, crs_compose)
     elif args.command == "check":
         pass
     return True
 
 
+def main() -> int:
+    return 0 if cli() else 1
+
+
 if __name__ == "__main__":
-    sys.exit(0 if main() else 1)
+    sys.exit(main())

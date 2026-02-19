@@ -162,7 +162,7 @@ class CRSComposeConfig(BaseModel):
     def md5_hash(self) -> str:
         """Compute MD5 hash of the configuration."""
         config_json = self.model_dump(exclude_none=True, mode="json")
-        config_json = remove_keys(config_json, ["cpuset", "llm_budget", "memory", "additional_env"])
+        config_json = remove_keys(config_json, ["cpuset", "llm_budget", "memory", "additional_env", "llm_config"])
         config_json = json.dumps(config_json)
         return hashlib.md5(config_json.encode()).hexdigest()[:12]
 
