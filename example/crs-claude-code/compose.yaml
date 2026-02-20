@@ -16,9 +16,6 @@ oss_crs_infra:
 # Builder sidecars are declared in crs.yaml (snapshot: true / run_snapshot: true)
 # and handled automatically by the framework — no separate entry needed.
 crs-claude-code:
-  source:
-    url: https://github.com/Team-Atlanta/crs-claude-code.git
-    ref: main
   cpuset: "2-7"
   memory: "16G"
   llm_budget: 10

@@ -14,9 +14,6 @@ oss_crs_infra:
 
 # --- CRS (atlantis-multilang-wo-concolic) -----------------------------------
 atlantis-multilang-wo-concolic:
-  source:
-    url: https://github.com/Team-Atlanta/atlantis-multilang-wo-concolic.git
-    ref: refined-oss-crs
   cpuset: "4-8"
   memory: "16G"
   llm_budget: 100

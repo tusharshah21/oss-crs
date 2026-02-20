@@ -16,9 +16,6 @@ oss_crs_infra:
 # Builder sidecar is declared in crs.yaml (inc-builder-asan with run_snapshot: true).
 # No separate oss-crs-builder compose entry needed.
 crs-codex:
-  source:
-    url: https://github.com/Team-Atlanta/crs-codex.git
-    ref: main
   cpuset: "2-7"
   memory: "16G"
   llm_budget: 10

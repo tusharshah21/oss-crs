@@ -15,8 +15,5 @@ oss_crs_infra:
 # --- CRS (atlantis-multilang-given_fuzzer) ----------------------------------
 # Bug-finding fuzzer — no LLM needed.
 atlantis-multilang-given_fuzzer:
-  source:
-    url: https://github.com/Team-Atlanta/atlantis-multilang-given_fuzzer.git
-    ref: main
   cpuset: "2-17"
   memory: "24G"

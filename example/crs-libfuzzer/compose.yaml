@@ -15,8 +15,5 @@ oss_crs_infra:
 # --- CRS (crs-libfuzzer) ---------------------------------------------------
 # Pure fuzzer — no LLM or builder sidecar needed.
 crs-libfuzzer:
-  source:
-    url: https://github.com/Team-Atlanta/crs-libfuzzer.git
-    ref: refined-oss-crs
   cpuset: "4-7"
   memory: "16G"
