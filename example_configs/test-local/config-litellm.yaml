@@ -1,0 +1,10 @@
+model_list:
+  - model_name: "claude-opus-4-5-20251101"    # alias model name to the ones CRS uses
+    litellm_params:
+      # NOTE Change "Qwen/Qwen3-0.6B" with actual hosted model name
+      model: "openai/Qwen/Qwen3-0.6B"         # openai/{MODEL_NAME}
+      # NOTE you can use any env var, or hardcode key here
+      api_key: os.environ/VLLM_KEY            # set in local model server
+      # NOTE Uncomment one of the following:
+      # api_base: http://172.17.0.1:8000/v1   # IP retrieved from `ip addr show docker0`
+      # api_base: https://example.com:8000/v1 # or replace with known domain
