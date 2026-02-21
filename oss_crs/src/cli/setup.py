@@ -169,8 +169,9 @@ REQUIREMENTS: list[tuple[str, Callable[[], CheckResult], str]] = [
 class SetupRunner:
     """Runs the interactive setup process for cgroup-parent mode."""
 
-    def __init__(self):
-        self.console = Console()
+    def __init__(self, yes: bool = False):
+        self.console = Console(quiet=yes)
+        self.yes = yes
         self.step_num = 0
         self.results: dict[str, CheckResult] = {}
 
@@ -180,14 +181,19 @@ class SetupRunner:
         detail_text = f" - {detail}" if detail else ""
         self.console.print(f"  [{icon}] {label}{detail_text}")
 
+    def confirm(self, message: str) -> bool | None:
+        """Prompt for confirmation. Returns True/False, or None if aborted."""
+        if self.yes:
+            return True
+        return questionary.confirm(message, default=True).ask()
+
     def run_command(self, description: str, command: str) -> bool:
         """Run a command with user confirmation."""
         self.console.print(f"\n[yellow]Action:[/yellow] {description}")
         self.console.print(f"[dim]Command:[/dim] {command}")
 
-        answer = questionary.confirm("Run this command?", default=True).ask()
-
-        if answer is None:  # Ctrl+C
+        answer = self.confirm("Run this command?")
+        if answer is None:
             self.console.print("[yellow]Aborted by user[/yellow]")
             return False
         if not answer:
@@ -215,12 +221,10 @@ class SetupRunner:
         self.console.print(f"\n[bold cyan]Step {self.step_num}:[/bold cyan] {step.title}")
         self.console.print(step.description)
 
-        proceed = questionary.confirm(f"Proceed with {step.title.lower()}?", default=True).ask()
-
+        proceed = self.confirm(f"Proceed with {step.title.lower()}?")
         if proceed is None:
             self.console.print("[yellow]Aborted by user[/yellow]")
             return False
-
         if not proceed:
             self.console.print("[yellow]Skipped[/yellow]")
             if step.skip_message:
@@ -347,8 +351,13 @@ def add_setup_command(subparsers) -> None:
         action="store_true",
         help="Only check status without making changes",
     )
+    setup.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Automatically accept all prompts (non-interactive mode)",
+    )
 
 
 def handle_setup(args) -> bool:
     """Handle the setup command."""
-    return SetupRunner().run(check_only=args.check)
+    return SetupRunner(yes=args.yes).run(check_only=args.check)
