@@ -8,6 +8,9 @@ from ..crs_compose import CRSCompose
 from ..config.crs_compose import CRSComposeConfig
 from ..target import Target
 from .artifacts import handle_artifacts
+from ..utils import normalize_run_id
+from ..config.artifacts import ArtifactsOutput, CRSArtifacts, ExchangeDir
+from .setup import add_setup_command, handle_setup
 
 
 DEFAULT_WORK_DIR = (Path(__file__) / "../../../../.oss-crs-workdir").resolve()
@@ -77,6 +80,11 @@ def add_build_target_command(subparsers):
         default=None,
         help="Sanitizer to use for build (default: from target config, usually 'address').",
     )
+    build_target.add_argument(
+        "--cgroup-parent",
+        action="store_true",
+        help="Use cgroup-parent for resource management instead of per-container limits. Requires 'oss-crs setup' first.",
+    )
 
 
 def add_run_command(subparsers):
@@ -138,6 +146,11 @@ def add_run_command(subparsers):
         type=Path,
         default=None,
         help="Directory of initial seed files, pre-populated into FETCH_DIR before containers start. Accessible via: libCRS fetch seed <local_path>",
+    )
+    run.add_argument(
+        "--cgroup-parent",
+        action="store_true",
+        help="Use cgroup-parent for resource management instead of per-container limits. Requires 'oss-crs setup' first.",
     )
 
 def add_artifacts_command(subparsers):
@@ -234,8 +247,13 @@ def cli() -> bool:
     add_artifacts_command(subparsers)
     add_check_command(subparsers)
     add_gen_compose_command(subparsers)
+    add_setup_command(subparsers)
 
     args = parser.parse_args()
+
+    # Handle setup command early - it doesn't need compose file
+    if args.command == "setup":
+        return handle_setup(args)
 
     # Resolve all Path arguments to absolute paths so that relative paths
     # (e.g., --target-proj-path ../ghostscript) work regardless of cwd.
@@ -271,13 +289,16 @@ def cli() -> bool:
             return False
     elif args.command == "build-target":
         target = init_target_from_args(args)
-        if not crs_compose.build_target(target, build_id=args.build_id, sanitizer=args.sanitizer):
+        cgroup_parent = getattr(args, "cgroup_parent", False)
+        # Library normalizes build_id internally
+        if not crs_compose.build_target(target, build_id=args.build_id, sanitizer=args.sanitizer, cgroup_parent=cgroup_parent):
             return False
     elif args.command == "run":
         target = init_target_from_args(args)
+        cgroup_parent = getattr(args, "cgroup_parent", False)
         if args.timeout is not None:
             crs_compose.set_deadline(time.monotonic() + args.timeout)
-        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id, sanitizer=args.sanitizer, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, seed_dir=args.seed_dir):
+        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id, sanitizer=args.sanitizer, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, seed_dir=args.seed_dir, cgroup_parent=cgroup_parent):
             return False
     elif args.command == "artifacts":
         target = init_target_from_args(args)
