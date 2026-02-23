@@ -40,22 +40,28 @@ def _ignore_build_junk(directory, contents):
     return [c for c in contents if c in (".git", "src")]
 
 
-def _seed_base_out_if_needed() -> bool:
+def _seed_base_out_if_needed() -> tuple[bool, str]:
     """Create /builds/base/out from prebuilt incremental build artifacts."""
     base_out = BUILDS_DIR / "base" / "out"
     if base_out.exists():
-        return True
-    if not PREBUILT_OUT_DIR.exists() or not PREBUILT_OUT_DIR.is_dir():
-        return False
+        return True, f"Base build artifacts already exist: {base_out}"
+    if not PREBUILT_OUT_DIR.exists():
+        return False, f"Prebuilt output path is missing: {PREBUILT_OUT_DIR}"
+    if not PREBUILT_OUT_DIR.is_dir():
+        return False, f"Prebuilt output path is not a directory: {PREBUILT_OUT_DIR}"
     try:
         if not any(PREBUILT_OUT_DIR.iterdir()):
-            return False
-    except Exception:
-        return False
+            return False, f"Prebuilt output directory is empty: {PREBUILT_OUT_DIR}"
+    except Exception as exc:
+        return False, f"Failed to inspect prebuilt output directory: {exc}"
     base_out.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(str(PREBUILT_OUT_DIR), str(base_out), dirs_exist_ok=True)
-    print(f"Seeded base build artifacts from prebuilt output: {PREBUILT_OUT_DIR}")
-    return True
+    try:
+        shutil.copytree(str(PREBUILT_OUT_DIR), str(base_out), dirs_exist_ok=True)
+    except Exception as exc:
+        return False, f"Failed to copy prebuilt artifacts into {base_out}: {exc}"
+    msg = f"Seeded base build artifacts from prebuilt output: {PREBUILT_OUT_DIR}"
+    print(msg)
+    return True, msg
 
 
 class JobSubmitResponse(BaseModel):
@@ -371,10 +377,13 @@ if __name__ == "__main__":
     # This avoids relying on startup compile side effects to populate /out.
     base_out = BUILDS_DIR / "base" / "out"
     if not base_out.exists():
-        if not _seed_base_out_if_needed():
+        seeded, reason = _seed_base_out_if_needed()
+        if not seeded:
             raise RuntimeError(
-                "Failed to initialize base build: expected non-empty "
-                "/OSS_CRS_BUILD_OUT_DIR/build from prebuilt artifacts"
+                "Failed to initialize base build from prebuilt artifacts.\n"
+                f"Reason: {reason}\n"
+                "Expected: /OSS_CRS_BUILD_OUT_DIR/build is a non-empty directory "
+                "mounted by oss-crs compose."
             )
 
     threading.Thread(target=job_worker, daemon=True).start()

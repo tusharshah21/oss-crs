@@ -21,6 +21,7 @@ logic for the CRS Compose work directory structure:
 from pathlib import Path
 
 from .target import Target
+from .utils import normalize_run_id
 
 
 class WorkDir:
@@ -59,6 +60,34 @@ class WorkDir:
     def get_run_dir(self, run_id: str, sanitizer: str) -> Path:
         """Get directory for a specific run."""
         return self.get_runs_dir(sanitizer) / run_id
+
+    @staticmethod
+    def _resolve_existing_id(raw_id: str, ids_dir: Path) -> str | None:
+        """Resolve a user-provided id to an existing directory name.
+
+        Prefer exact match first, then try normalized form for backward
+        compatibility. IDs are treated as directory names, so path separators
+        are rejected.
+        """
+        if not raw_id or "/" in raw_id or "\\" in raw_id:
+            return None
+        if (ids_dir / raw_id).is_dir():
+            return raw_id
+        try:
+            normalized = normalize_run_id(raw_id)
+        except ValueError:
+            return None
+        if (ids_dir / normalized).is_dir():
+            return normalized
+        return None
+
+    def resolve_run_id(self, raw_id: str, sanitizer: str) -> str | None:
+        """Resolve a user-provided run-id to an existing directory name."""
+        return self._resolve_existing_id(raw_id, self.get_runs_dir(sanitizer))
+
+    def resolve_build_id(self, raw_id: str, sanitizer: str) -> str | None:
+        """Resolve a user-provided build-id to an existing directory name."""
+        return self._resolve_existing_id(raw_id, self.get_builds_dir(sanitizer))
 
     def get_run_logs_dir(
         self,

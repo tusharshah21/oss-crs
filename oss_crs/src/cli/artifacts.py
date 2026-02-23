@@ -8,7 +8,6 @@ import questionary
 
 from ..config.artifacts import ArtifactsOutput, CRSArtifacts, ExchangeDir, RunLogs
 from ..target import Target
-from ..utils import normalize_run_id
 
 
 def collect_run_ids_for_target(
@@ -83,7 +82,11 @@ def handle_artifacts(args, crs_compose, target: Target) -> bool:
 
     # run_id for SUBMIT/FETCH/SHARED dirs - interactive selection if not provided
     if args.run_id:
-        run_id = normalize_run_id(args.run_id)
+        resolved_run_id = work_dir.resolve_run_id(args.run_id, sanitizer)
+        if resolved_run_id is None:
+            print(f"Run '{args.run_id}' not found.", file=sys.stderr)
+            return False
+        run_id = resolved_run_id
     else:
         run_id = select_run_id_interactively(crs_compose, target, harness, sanitizer)
         if run_id is None:
@@ -91,12 +94,11 @@ def handle_artifacts(args, crs_compose, target: Target) -> bool:
 
     # build_id for BUILD_OUT_DIR - use provided, read from run, or find latest
     if args.build_id:
-        build_id = normalize_run_id(args.build_id)
-        # Explicit --build-id must exist on disk
-        build_dir = work_dir.get_build_dir(build_id, sanitizer)
-        if not build_dir.exists():
+        resolved_build_id = work_dir.resolve_build_id(args.build_id, sanitizer)
+        if resolved_build_id is None:
             print(f"Build '{args.build_id}' not found.", file=sys.stderr)
             return False
+        build_id = resolved_build_id
     else:
         # Try to get build_id from the run directory first
         build_id = work_dir.read_build_id_for_run(run_id, sanitizer)

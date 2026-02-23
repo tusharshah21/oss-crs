@@ -437,73 +437,106 @@ class CRSCompose:
             str(docker_compose_path),
         ]
 
-        def _run_capture(cmd: list[str]) -> tuple[str, str, int]:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            return result.stdout or "", result.stderr or "", result.returncode
+        try:
+            def _run_capture(cmd: list[str]) -> tuple[str, str, int]:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                return result.stdout or "", result.stderr or "", result.returncode
 
-        def _run_to_files(cmd: list[str], stdout_path: Path, stderr_path: Path) -> int:
-            with stdout_path.open("w") as stdout_f:
-                with stderr_path.open("w") as stderr_f:
-                    result = subprocess.run(cmd, stdout=stdout_f, stderr=stderr_f, text=True)
-                    return result.returncode
+            def _run_to_files(
+                cmd: list[str], stdout_path: Path, stderr_path: Path
+            ) -> int:
+                with stdout_path.open("w") as stdout_f:
+                    with stderr_path.open("w") as stderr_f:
+                        result = subprocess.run(
+                            cmd, stdout=stdout_f, stderr=stderr_f, text=True
+                        )
+                        return result.returncode
 
-        compose_logs_rc = _run_to_files(
-            [*cmd_base, "logs", "--no-color", "--timestamps"],
-            logs_dir / "docker-compose.stdout.log",
-            logs_dir / "docker-compose.stderr.log",
-        )
-
-        services_stdout, services_stderr, services_rc = _run_capture(
-            [*cmd_base, "config", "--services"]
-        )
-        if services_stderr:
-            (logs_dir / "services-config.stderr.log").write_text(services_stderr)
-
-        service_names = [
-            line.strip() for line in services_stdout.splitlines() if line.strip()
-        ]
-        (logs_dir / "services.json").write_text(
-            json.dumps(service_names, indent=2, sort_keys=True)
-        )
-
-        failed_services: dict[str, int] = {}
-        for service in service_names:
-            safe_name = self._safe_service_name(service)
-            service_stdout_log = services_dir / f"{safe_name}.stdout.log"
-            service_stderr_log = services_dir / f"{safe_name}.stderr.log"
-            rc = _run_to_files(
-                [*cmd_base, "logs", "--no-color", "--timestamps", service],
-                service_stdout_log,
-                service_stderr_log,
+            compose_logs_rc = _run_to_files(
+                [*cmd_base, "logs", "--no-color", "--timestamps"],
+                logs_dir / "docker-compose.stdout.log",
+                logs_dir / "docker-compose.stderr.log",
             )
-            if rc != 0:
-                failed_services[service] = rc
 
-            owner_crs = self._service_owner_crs(service)
-            if owner_crs is not None:
-                crs_dir = crs_logs_root / owner_crs
-                crs_dir.mkdir(parents=True, exist_ok=True)
-                self._link_or_copy(service_stdout_log, crs_dir / service_stdout_log.name)
-                self._link_or_copy(service_stderr_log, crs_dir / service_stderr_log.name)
+            services_stdout, services_stderr, services_rc = _run_capture(
+                [*cmd_base, "config", "--services"]
+            )
+            if services_stderr:
+                (logs_dir / "services-config.stderr.log").write_text(services_stderr)
 
-        metadata = {
-            "compose_logs_rc": compose_logs_rc,
-            "services_command_rc": services_rc,
-            "failed_service_logs": failed_services,
-        }
-        (logs_dir / "capture-metadata.json").write_text(
-            json.dumps(metadata, indent=2, sort_keys=True)
-        )
-        if services_rc != 0:
+            service_names = [
+                line.strip() for line in services_stdout.splitlines() if line.strip()
+            ]
+            (logs_dir / "services.json").write_text(
+                json.dumps(service_names, indent=2, sort_keys=True)
+            )
+
+            failed_services: dict[str, int] = {}
+            failed_links: dict[str, str] = {}
+            for service in service_names:
+                safe_name = self._safe_service_name(service)
+                service_stdout_log = services_dir / f"{safe_name}.stdout.log"
+                service_stderr_log = services_dir / f"{safe_name}.stderr.log"
+                rc = _run_to_files(
+                    [*cmd_base, "logs", "--no-color", "--timestamps", service],
+                    service_stdout_log,
+                    service_stderr_log,
+                )
+                if rc != 0:
+                    failed_services[service] = rc
+
+                owner_crs = self._service_owner_crs(service)
+                if owner_crs is not None:
+                    crs_dir = crs_logs_root / owner_crs
+                    crs_dir.mkdir(parents=True, exist_ok=True)
+                    try:
+                        self._link_or_copy(
+                            service_stdout_log, crs_dir / service_stdout_log.name
+                        )
+                        self._link_or_copy(
+                            service_stderr_log, crs_dir / service_stderr_log.name
+                        )
+                    except Exception as exc:
+                        failed_links[service] = f"{type(exc).__name__}: {exc}"
+
+            metadata = {
+                "compose_logs_rc": compose_logs_rc,
+                "services_command_rc": services_rc,
+                "failed_service_logs": failed_services,
+                "failed_log_links": failed_links,
+            }
+            (logs_dir / "capture-metadata.json").write_text(
+                json.dumps(metadata, indent=2, sort_keys=True)
+            )
+
+            warnings: list[str] = []
+            if compose_logs_rc != 0:
+                warnings.append(
+                    "Failed to capture docker compose aggregate logs; "
+                    "see docker-compose.stderr.log."
+                )
+            if services_rc != 0:
+                warnings.append(
+                    "Failed to list docker compose services; "
+                    "see services-config.stderr.log."
+                )
+            if failed_services:
+                warnings.append(
+                    "Some service logs failed to capture; see capture-metadata.json."
+                )
+            if failed_links:
+                warnings.append(
+                    "Some per-CRS log links failed; see capture-metadata.json."
+                )
+            if warnings:
+                (logs_dir / "capture-warning.txt").write_text("\n".join(warnings) + "\n")
+        except Exception as exc:
             (logs_dir / "capture-warning.txt").write_text(
-                "Failed to list docker compose services during log capture; "
-                "see docker-compose.stderr.log."
-            )
-        elif failed_services:
-            (logs_dir / "capture-warning.txt").write_text(
-                "Some service logs failed to capture; see capture-metadata.json."
+                "Unexpected failure during compose log capture.\n"
+                f"{type(exc).__name__}: {exc}\n"
             )
 
+        # Log capture is always best-effort; never fail the run on this task.
         return TaskResult(success=True)
 
     @staticmethod
