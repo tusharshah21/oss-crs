@@ -60,6 +60,29 @@ class WorkDir:
         """Get directory for a specific run."""
         return self.get_runs_dir(sanitizer) / run_id
 
+    def get_run_logs_dir(
+        self,
+        target: Target,
+        run_id: str,
+        sanitizer: str,
+        create: bool = True,
+    ) -> Path:
+        """Get run-scoped logs directory (outside EXCHANGE_DIR/SUBMIT_DIR mounts).
+
+        Structure: <sanitizer>/runs/<run_id>/logs/<target_key>/<harness>/
+        """
+        assert target.target_harness, "target_harness must be set for run logs dir"
+        target_key = self._get_target_key(target)
+        path = (
+            self.get_run_dir(run_id, sanitizer)
+            / "logs"
+            / target_key
+            / target.target_harness
+        )
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+
     # -------------------------------------------------------------------------
     # CRS-specific directory helpers
     # -------------------------------------------------------------------------
@@ -72,12 +95,7 @@ class WorkDir:
         Structure: <sanitizer>/builds/<build_id>/crs/<crs_name>/<target_key>/
         """
         target_key = self._get_target_key(target)
-        return (
-            self.get_build_dir(build_id, sanitizer)
-            / "crs"
-            / crs_name
-            / target_key
-        )
+        return self.get_build_dir(build_id, sanitizer) / "crs" / crs_name / target_key
 
     def get_build_output_dir(
         self,
@@ -91,7 +109,10 @@ class WorkDir:
 
         Structure: <sanitizer>/builds/<build_id>/crs/<crs_name>/<target_key>/BUILD_OUT_DIR/
         """
-        path = self.get_crs_build_dir(crs_name, target, build_id, sanitizer) / "BUILD_OUT_DIR"
+        path = (
+            self.get_crs_build_dir(crs_name, target, build_id, sanitizer)
+            / "BUILD_OUT_DIR"
+        )
         if create:
             path.mkdir(parents=True, exist_ok=True)
         return path
@@ -104,12 +125,7 @@ class WorkDir:
         Structure: <sanitizer>/runs/<run_id>/crs/<crs_name>/<target_key>/
         """
         target_key = self._get_target_key(target)
-        return (
-            self.get_run_dir(run_id, sanitizer)
-            / "crs"
-            / crs_name
-            / target_key
-        )
+        return self.get_run_dir(run_id, sanitizer) / "crs" / crs_name / target_key
 
     def get_submit_dir(
         self,
@@ -219,7 +235,9 @@ class WorkDir:
             return build_id_file.read_text().strip()
         return None
 
-    def write_build_id_for_run(self, run_id: str, sanitizer: str, build_id: str) -> None:
+    def write_build_id_for_run(
+        self, run_id: str, sanitizer: str, build_id: str
+    ) -> None:
         """Write the build-id for a run."""
         run_dir = self.get_run_dir(run_id, sanitizer)
         run_dir.mkdir(parents=True, exist_ok=True)

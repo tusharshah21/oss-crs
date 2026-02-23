@@ -1,16 +1,19 @@
 """Artifacts command handling for oss-crs CLI."""
+
 import re
 import sys
 import datetime
 
 import questionary
 
-from ..config.artifacts import ArtifactsOutput, CRSArtifacts, ExchangeDir
+from ..config.artifacts import ArtifactsOutput, CRSArtifacts, ExchangeDir, RunLogs
 from ..target import Target
 from ..utils import normalize_run_id
 
 
-def collect_run_ids_for_target(crs_compose, target: Target, harness: str | None, sanitizer: str) -> list[str]:
+def collect_run_ids_for_target(
+    crs_compose, target: Target, harness: str | None, sanitizer: str
+) -> list[str]:
     """Collect all run-ids for a target from SUBMIT_DIR (run artifacts)."""
     seen = set()
 
@@ -42,7 +45,7 @@ def collect_run_ids_for_target(crs_compose, target: Target, harness: str | None,
 
     # Sort by timestamp (extract 10-digit sequences), newest first
     def extract_ts(run_id: str) -> int:
-        match = re.search(r'\d{10}', run_id)
+        match = re.search(r"\d{10}", run_id)
         return int(match.group()) if match else 0
 
     return sorted(seen, key=extract_ts, reverse=True)
@@ -50,7 +53,7 @@ def collect_run_ids_for_target(crs_compose, target: Target, harness: str | None,
 
 def format_run_id(run_id: str) -> str:
     """Format a run-id for display. Extract unix timestamp and show human-readable time."""
-    match = re.search(r'\d{10}', run_id)
+    match = re.search(r"\d{10}", run_id)
     if match:
         ts = int(match.group())
         dt = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
@@ -58,7 +61,9 @@ def format_run_id(run_id: str) -> str:
     return run_id
 
 
-def select_run_id_interactively(crs_compose, target: Target, harness: str | None, sanitizer: str) -> str | None:
+def select_run_id_interactively(
+    crs_compose, target: Target, harness: str | None, sanitizer: str
+) -> str | None:
     """Prompt user to select a run-id from available runs."""
     all_run_ids = collect_run_ids_for_target(crs_compose, target, harness, sanitizer)
     if not all_run_ids:
@@ -103,7 +108,10 @@ def handle_artifacts(args, crs_compose, target: Target) -> bool:
     output = ArtifactsOutput(build_id=build_id, run_id=run_id, sanitizer=sanitizer)
 
     if harness:
-        output.exchange_dir = ExchangeDir.from_work_dir(work_dir, target, run_id, sanitizer)
+        output.exchange_dir = ExchangeDir.from_work_dir(
+            work_dir, target, run_id, sanitizer
+        )
+        output.run_logs = RunLogs.from_work_dir(work_dir, target, run_id, sanitizer)
 
     exchange_base = output.exchange_dir.base if output.exchange_dir else None
     for crs in crs_compose.crs_list:
