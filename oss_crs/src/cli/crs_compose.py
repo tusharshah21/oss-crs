@@ -140,6 +140,7 @@ def add_run_command(subparsers):
         help="Directory of initial seed files, pre-populated into FETCH_DIR before containers start. Accessible via: libCRS fetch seed <local_path>",
     )
 
+
 def add_artifacts_command(subparsers):
     artifacts = subparsers.add_parser(
         "artifacts", help="Show directories for run artifacts (JSON output)"
@@ -170,7 +171,11 @@ def add_artifacts_command(subparsers):
         type=str,
         required=False,
         default=None,
-        help="Run identifier to look up artifacts for (interactive selection if omitted)",
+        help=(
+            "Run identifier to resolve artifacts for. If omitted, interactive "
+            "selection is used. If provided but not found yet, paths are still "
+            "computed deterministically for pre-run resolution."
+        ),
     )
 
 
@@ -180,8 +185,7 @@ def add_check_command(subparsers):
 
 def add_gen_compose_command(subparsers):
     gen_compose = subparsers.add_parser(
-        "gen-compose",
-        help="Generate a compose file with mapped CPU sets"
+        "gen-compose", help="Generate a compose file with mapped CPU sets"
     )
     gen_compose.add_argument(
         "--compose-template",
@@ -222,8 +226,7 @@ def cli() -> bool:
     signal.signal(signal.SIGTERM, _sigterm_handler)
     load_dotenv()
     parser = argparse.ArgumentParser(
-        prog="oss-crs",
-        description="OSS-CRS: Cyber Reasoning System orchestration CLI"
+        prog="oss-crs", description="OSS-CRS: Cyber Reasoning System orchestration CLI"
     )
     subparsers = parser.add_subparsers(
         dest="command", required=True, help="Command to run"
@@ -264,20 +267,33 @@ def cli() -> bool:
 
     # Skip CRS repo init for commands that don't need it
     skip_crs_init = args.command == "artifacts"
-    crs_compose = CRSCompose.from_yaml_file(args.compose_file, args.work_dir, skip_crs_init=skip_crs_init)
+    crs_compose = CRSCompose.from_yaml_file(
+        args.compose_file, args.work_dir, skip_crs_init=skip_crs_init
+    )
 
     if args.command == "prepare":
         if not crs_compose.prepare(publish=args.publish):
             return False
     elif args.command == "build-target":
         target = init_target_from_args(args)
-        if not crs_compose.build_target(target, build_id=args.build_id, sanitizer=args.sanitizer):
+        if not crs_compose.build_target(
+            target, build_id=args.build_id, sanitizer=args.sanitizer
+        ):
             return False
     elif args.command == "run":
         target = init_target_from_args(args)
         if args.timeout is not None:
             crs_compose.set_deadline(time.monotonic() + args.timeout)
-        if not crs_compose.run(target, run_id=args.run_id, build_id=args.build_id, sanitizer=args.sanitizer, pov=args.pov, pov_dir=args.pov_dir, diff=args.diff, seed_dir=args.seed_dir):
+        if not crs_compose.run(
+            target,
+            run_id=args.run_id,
+            build_id=args.build_id,
+            sanitizer=args.sanitizer,
+            pov=args.pov,
+            pov_dir=args.pov_dir,
+            diff=args.diff,
+            seed_dir=args.seed_dir,
+        ):
             return False
     elif args.command == "artifacts":
         target = init_target_from_args(args)
