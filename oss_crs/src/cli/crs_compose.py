@@ -30,19 +30,29 @@ def add_common_arguments(parser):
 
 def add_target_arguments(parser):
     parser.add_argument(
+        "--target-path",
         "--target-proj-path",
+        dest="target_proj_path",
         type=Path,
         required=True,
-        help="""
-        Target Project Path where includes oss-fuzz compatible files (e.g., Dockerfile, project.yaml, ...)
-        # TODO: this accepts only local paths for now. But, we will support remote paths later.
-        """,
+        help=(
+            "Path to OSS-Fuzz target project directory "
+            "(contains Dockerfile/project.yaml/build.sh). "
+            "--target-proj-path is kept as compatibility alias."
+        ),
     )
     parser.add_argument(
+        "--target-source-path",
         "--target-repo-path",
+        dest="target_repo_path",
         type=Path,
         required=False,
-        help="Local path to the target repository to build with the target project configuration.",
+        help=(
+            "Optional local source override path. "
+            "When set, oss-crs overlays this source into the effective target "
+            "source path resolved from Dockerfile WORKDIR. "
+            "--target-repo-path is kept as compatibility alias."
+        ),
     )
 
 

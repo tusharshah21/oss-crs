@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Optional
 import hashlib
+import posixpath
+import re
 import shutil
 import subprocess
 import tempfile
@@ -409,12 +411,54 @@ class Target:
             "engine": "libfuzzer",
             "sanitizer": "address",
             "architecture": "x86_64",
+            "repo_path": self._resolve_effective_workdir(),
         }
 
         if self.target_harness:
             ret["harness"] = self.target_harness
 
         return ret
+
+    def _resolve_effective_workdir(self) -> str:
+        """Resolve effective final WORKDIR from target Dockerfile.
+
+        WORKDIR instructions are applied cumulatively. Relative WORKDIR values
+        are resolved against the current effective WORKDIR. We treat SRC as
+        '/src' by default when expanding `$SRC` / `${SRC}`.
+        """
+        dockerfile = self.proj_path / "Dockerfile"
+        if not dockerfile.exists():
+            return "/src"
+
+        src_root = "/src"
+        current = src_root
+        workdir_seen = False
+
+        try:
+            for raw in dockerfile.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                match = re.match(r"(?i)^WORKDIR\s+(.+)$", line)
+                if not match:
+                    continue
+
+                workdir_seen = True
+                wd = match.group(1).strip().strip("'\"")
+                if not wd:
+                    continue
+
+                wd = wd.replace("${SRC}", src_root).replace("$SRC", src_root)
+
+                if wd.startswith("/"):
+                    current = posixpath.normpath(wd)
+                else:
+                    current = posixpath.normpath(posixpath.join(current, wd))
+
+            return current if workdir_seen else src_root
+        except Exception:
+            return src_root
 
     def get_snapshot_image_name(self, sanitizer: str) -> str:
         repo_hash = self.__get_repo_hash()
