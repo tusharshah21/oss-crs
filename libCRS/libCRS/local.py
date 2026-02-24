@@ -6,7 +6,7 @@ from pathlib import Path
 
 import requests as http_requests
 
-from .base import CRSUtils, DataType
+from .base import CRSUtils, DataType, SourceType
 from .common import rsync_copy, get_env
 from .fetch import FetchHelper
 from .submit import SubmitHelper
@@ -33,6 +33,15 @@ class LocalCRSUtils(CRSUtils):
         src = _get_build_out_dir() / src_path
         dst = Path(dst_path)
         rsync_copy(src, dst)
+
+    def download_source(self, source_type: SourceType, dst_path: Path) -> None:
+        if source_type == SourceType.TARGET:
+            src = Path(get_env("OSS_CRS_PROJ_PATH"))
+        elif source_type == SourceType.REPO:
+            src = Path(get_env("OSS_CRS_REPO_PATH"))
+        else:
+            raise ValueError(f"Unsupported source type: {source_type}")
+        rsync_copy(src, Path(dst_path))
 
     def submit_build_output(self, src_path: str, dst_path: Path) -> None:
         src = Path(src_path)

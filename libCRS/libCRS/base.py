@@ -27,6 +27,14 @@ class DataType(str, Enum):
         return _DIR_NAMES[self.value]
 
 
+class SourceType(str, Enum):
+    TARGET = "target"
+    REPO = "repo"
+
+    def __str__(self) -> str:
+        return self.value
+
+
 class CRSUtils(ABC):
     def __init__(self):
         # InfraClient handles fetching from FETCH_DIR (read-only).
@@ -36,6 +44,16 @@ class CRSUtils(ABC):
     @abstractmethod
     def download_build_output(self, src_path: str, dst_path: Path) -> None:
         """Download build output from src_path (in infra) to dst_path (in local)."""
+        pass
+
+    @abstractmethod
+    def download_source(self, source_type: SourceType, dst_path: Path) -> None:
+        """Download source tree to local destination path.
+
+        source_type:
+            - target: OSS_CRS_PROJ_PATH
+            - repo: OSS_CRS_REPO_PATH
+        """
         pass
 
     @abstractmethod
