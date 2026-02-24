@@ -1,0 +1,28 @@
+##############################################################################
+#                        CRS Compose Configuration                           #
+#              Example for atlantis-java-main (bug-finding)                  #
+##############################################################################
+
+# --- General Settings -------------------------------------------------------
+run_env: local
+docker_registry: local
+
+# --- Infrastructure ---------------------------------------------------------
+# LiteLLM proxy + PostgreSQL + Exchange sidecar 等基础设施服务的资源限制
+oss_crs_infra:
+  cpuset: "0-3"
+  memory: "16G"
+
+# --- CRS (atlantis-java-main) ----------------------------------------------
+# Java bug-finding CRS — 多 Jazzer fuzzer 变体 + LLM 驱动的 PoC 生成、
+# 漏洞利用套件(expkit)、静态分析、CodeQL、concolic 执行等模块。
+atlantis-java-main:
+  source:
+    local_path: /tmp/atlantis-java-snapshot
+  cpuset: "4-11"
+  memory: "32G"
+  llm_budget: 100
+
+# --- LLM Configuration -----------------------------------------------------
+llm_config:
+  litellm_config: ./example/atlantis-java-main/litellm-config.yaml
