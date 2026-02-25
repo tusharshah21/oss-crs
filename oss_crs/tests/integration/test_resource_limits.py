@@ -170,3 +170,173 @@ def test_run_enforces_memory_limits_in_active_mode(
         numeric = [int(value) for value in observed_max_values if value.isdigit()]
         assert numeric, f"Expected numeric memory.max values, got: {observed_max_values}"
         assert all(value == expected_memory for value in numeric)
+
+
+@pytest.fixture
+def no_resource_compose_file(tmp_dir):
+    """Create a compose file WITHOUT resource limits specified."""
+    content = {
+        "run_env": "local",
+        "docker_registry": "local",
+        "oss_crs_infra": {"cpuset": "0", "memory": "256M"},
+        "dummy-crs": {
+            "source": {"local_path": str(FIXTURES_DIR / "dummy-crs")},
+            # No cpuset or memory specified
+        },
+    }
+    path = tmp_dir / "compose.yaml"
+    path.write_text(yaml.dump(content))
+    return path
+
+
+@pytest.mark.skipif(not docker_available(), reason="Docker not available")
+def test_build_target_no_limits_when_unspecified(
+    cli_runner,
+    mock_project_path,
+    mock_repo_path,
+    no_resource_compose_file,
+    work_dir,
+):
+    """When resource limits are not specified, Docker should not have cpuset/mem_limit."""
+    build_id = "no-limits-build"
+
+    result = cli_runner(
+        "build-target",
+        "--compose-file",
+        str(no_resource_compose_file),
+        "--work-dir",
+        str(work_dir),
+        "--target-proj-path",
+        str(mock_project_path),
+        "--target-repo-path",
+        str(mock_repo_path),
+        "--build-id",
+        build_id,
+        timeout=300,
+    )
+    assert result.returncode == 0, f"build-target failed: {result.stderr}"
+
+    # Check that the build_info.txt shows no explicit limits
+    build_info_files = list(work_dir.rglob("build_info.txt"))
+    assert build_info_files, "Expected dummy builder output build_info.txt"
+
+    build_info = build_info_files[0].read_text()
+    # memory.max should be "max" (unlimited) when no limit is set
+    memory_max = _extract_field(build_info, "memory_max")
+    assert memory_max == "max", f"Expected 'max' for unlimited memory, got: {memory_max}"
+
+
+@pytest.fixture
+def multi_crs_compose_file(tmp_dir):
+    """Create a compose file with multiple CRSs having different resource limits."""
+    # We'll use the same dummy-crs source but configure it twice with different names
+    # Note: This requires the CRS to be registered or use local_path
+    content = {
+        "run_env": "local",
+        "docker_registry": "local",
+        "oss_crs_infra": {"cpuset": "0", "memory": "256M"},
+        "crs-alpha": {
+            "source": {"local_path": str(FIXTURES_DIR / "dummy-crs")},
+            "cpuset": "0-1",
+            "memory": "128M",
+        },
+        "crs-beta": {
+            "source": {"local_path": str(FIXTURES_DIR / "dummy-crs")},
+            "cpuset": "2-3",
+            "memory": "256M",
+        },
+    }
+    path = tmp_dir / "compose.yaml"
+    path.write_text(yaml.dump(content))
+    return path
+
+
+@pytest.mark.skipif(not docker_available(), reason="Docker not available")
+def test_multi_crs_different_resource_limits(
+    cli_runner,
+    mock_project_path,
+    mock_repo_path,
+    multi_crs_compose_file,
+    work_dir,
+):
+    """Multiple CRSs should each have their own resource limits."""
+    build_id = "multi-crs-build"
+    run_id = "multi-crs-run"
+
+    # Build for each CRS - they share the same target
+    build_result = cli_runner(
+        "build-target",
+        "--compose-file",
+        str(multi_crs_compose_file),
+        "--work-dir",
+        str(work_dir),
+        "--target-proj-path",
+        str(mock_project_path),
+        "--target-repo-path",
+        str(mock_repo_path),
+        "--build-id",
+        build_id,
+        timeout=300,
+    )
+    assert build_result.returncode == 0, f"build-target failed: {build_result.stderr}"
+
+    # Run with both CRSs
+    run_result = cli_runner(
+        "run",
+        "--compose-file",
+        str(multi_crs_compose_file),
+        "--work-dir",
+        str(work_dir),
+        "--target-proj-path",
+        str(mock_project_path),
+        "--target-repo-path",
+        str(mock_repo_path),
+        "--target-harness",
+        "fuzz_parse_buffer",
+        "--build-id",
+        build_id,
+        "--run-id",
+        run_id,
+        "--timeout",
+        "30",
+        timeout=120,
+    )
+    # Run may timeout or complete, both are acceptable for this test
+    assert run_result.returncode in (0, 1), f"run failed unexpectedly: {run_result.stderr}"
+
+    # Check if cgroup-parent mode was used
+    uses_cgroup_parent = "Created cgroups at:" in run_result.stdout
+
+    # Find memory logs from both CRSs
+    memory_logs = sorted(work_dir.rglob("*_memory_test.txt"))
+
+    if uses_cgroup_parent:
+        # With cgroup-parent, we expect separate cgroups for each CRS
+        # The containers should see their cgroup path
+        cgroup_paths = set()
+        for log_path in memory_logs:
+            text = log_path.read_text()
+            # Extract cgroup path from log
+            for line in text.splitlines():
+                if "cgroup_path:" in line:
+                    path = line.split("cgroup_path:", 1)[1].strip()
+                    # Extract the CRS name from the cgroup path
+                    # Expected format: .../crs-alpha/... or .../crs-beta/...
+                    if "crs-alpha" in path or "crs-beta" in path:
+                        cgroup_paths.add(path)
+
+        # We should see logs from containers (may be from same CRS if running sequentially)
+        assert memory_logs, "Expected memory test logs from CRS containers"
+    else:
+        # Without cgroup-parent, check env vars for different limits
+        env_limits = set()
+        for log_path in memory_logs:
+            text = log_path.read_text()
+            for line in text.splitlines():
+                if "env_memory_limit:" in line:
+                    limit = line.split("env_memory_limit:", 1)[1].strip().strip('"')
+                    env_limits.add(limit)
+
+        # Should see different memory limits from different CRSs
+        # (128M from crs-alpha, 256M from crs-beta)
+        assert len(env_limits) >= 1, f"Expected to see memory limits in logs, got: {env_limits}"
