@@ -140,6 +140,33 @@ target_build_phase:
       SANITIZER: coverage
 ```
 
+### Directed Build Inputs
+
+For directed fuzzing workflows, `oss-crs build-target` can stage input artifacts into build containers:
+
+- `--diff <file>`: provide a reference diff
+- `--bug-candidate <file>`: provide a single bug-candidate report
+- `--bug-candidate-dir <dir>`: provide a directory of bug-candidate reports
+
+When provided, these artifacts are mounted into `OSS_CRS_FETCH_DIR` during the build phase.
+Builder scripts should consume them through libCRS fetch commands, for example:
+
+```bash
+libCRS fetch diff /work/diff
+libCRS fetch bug-candidate /work/bug-candidates
+```
+
+### Input Semantics (Capability vs Requirement)
+
+OSS-CRS distinguishes between:
+
+- **Capability**: a CRS can consume a given input type through libCRS (for example `seed`, `pov`, `bug-candidate`, `diff`).
+- **Requirement**: a specific CRS needs that input to function for a given workflow.
+
+Framework-level integration expects CRS containers to support standard input channels where applicable, but input presence is still workflow-dependent.
+For example, initial seeds are optional in general OSS-CRS execution, while a directed fuzzer may require a SARIF bug-candidate to start.
+When an input is required by a CRS, validate and fail fast in CRS logic, and document the requirement in CRS-specific docs.
+
 ---
 
 ## CRS Run Phase

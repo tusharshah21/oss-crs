@@ -218,6 +218,7 @@ fi
 - Use `libCRS submit-build-output <src> <dst>` to make build artifacts available to the run phase.
 - Use `libCRS skip-build-output <dst>` to mark optional outputs as intentionally skipped.
 - The `outputs` list in `crs.yaml` declares what paths the build step is expected to produce. Every output must either be submitted or explicitly skipped.
+- For directed fuzzers, `oss-crs build-target --diff <file>` plus `--bug-candidate <file>` or `--bug-candidate-dir <dir>` stages inputs into build-phase `OSS_CRS_FETCH_DIR`; consume them with `libCRS fetch diff <dir>` / `libCRS fetch bug-candidate <dir>`.
 
 ---
 
@@ -389,6 +390,13 @@ uv run oss-crs prepare \
 uv run oss-crs build-target \
   --compose-file ./my-crs-compose.yaml \
   --fuzz-proj-path ~/oss-fuzz/projects/libxml2
+
+# Optional: directed build inputs for target build phase
+uv run oss-crs build-target \
+  --compose-file ./my-crs-compose.yaml \
+  --target-proj-path ~/oss-fuzz/projects/libxml2 \
+  --diff ./ref.diff \
+  --bug-candidate-dir ./bug-candidates
 
 # 3. Run — launch the CRS
 uv run oss-crs run \
@@ -745,9 +753,13 @@ Your CRS should submit findings through libCRS:
 
 ## Fetching Data
 
-CRS containers receive data through `FETCH_DIR`, a read-only volume mounted to all non-builder containers. Data arrives from two sources:
+CRS containers receive data through `FETCH_DIR`, a read-only volume mounted to run-phase CRS containers. During `build-target`, it is also mounted to builder containers when directed inputs are provided (`--diff`, `--bug-candidate`, `--bug-candidate-dir`).
 
-1. **Bootup data** — Files passed via `oss-crs run` flags (`--pov-dir`, `--diff`, `--seed-dir`), pre-populated by the host before containers start.
+Data arrives from two sources:
+
+1. **Bootup data** — Files passed via CLI flags, pre-populated by the host before containers start.
+run-phase: `oss-crs run --pov-dir/--diff/--seed-dir/--bug-candidate/--bug-candidate-dir`
+build-phase: `oss-crs build-target --diff/--bug-candidate/--bug-candidate-dir`
 2. **Inter-CRS data** — Files submitted by other CRSs at runtime via `register-submit-dir` or `submit`, delivered by the exchange sidecar which polls `SUBMIT_DIR` and copies artifacts into the shared exchange volume.
 
 ### Bootup Data (oss-crs run flags)
@@ -756,6 +768,11 @@ The operator passes data via `oss-crs run`:
 - `--pov <file>` or `--pov-dir <dir>` — PoV files → `FETCH_DIR/povs/`
 - `--diff <file>` — Reference diff → `FETCH_DIR/diffs/ref.diff`
 - `--seed-dir <dir>` — Seed files → `FETCH_DIR/seeds/`
+- `--bug-candidate <file>` — Bug-candidate report file → `FETCH_DIR/bug-candidates/`
+- `--bug-candidate-dir <dir>` — Bug-candidate report directory → `FETCH_DIR/bug-candidates/`
+
+TODO: Standardize the bug-candidate format across CRSs (for example, SARIF 2.1.0) and define validation policy.
+Reference implementation: [`libCRS/libCRS/sarif.py`](../libCRS/libCRS/sarif.py).
 
 ### Using register-fetch-dir (Daemon Poller)
 
@@ -791,6 +808,7 @@ NEW_FILES=$(libCRS fetch pov /my-povs)
 | `--pov`, `--pov-dir` | `pov` | `FETCH_DIR/povs/` |
 | `--diff` | `diff` | `FETCH_DIR/diffs/` |
 | `--seed-dir` | `seed` | `FETCH_DIR/seeds/` |
+| `--bug-candidate`, `--bug-candidate-dir` | `bug-candidate` | `FETCH_DIR/bug-candidates/` |
 
 ---
 
