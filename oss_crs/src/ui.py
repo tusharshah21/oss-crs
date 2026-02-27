@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from rich.console import Console, Group
+
+from .utils import bold, get_console, green, log_error, yellow
 from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
@@ -58,7 +60,7 @@ class MultiTaskProgress:
         self.tasks = tasks
         self.task_names = [name for name, _ in tasks]
         self.title = title
-        self.console = console or Console()
+        self.console = console or get_console()
         self.deadline: Optional[float] = deadline
         self.statuses: dict[str, TaskStatus] = {
             name: TaskStatus.PENDING for name in self.task_names
@@ -606,14 +608,14 @@ class MultiTaskProgress:
             if task_name:
                 self.set_error_info(task_name, error_msg)
             else:
-                Console().print(f"[bold red]Error:[/bold red] {error_msg}")
+                log_error(error_msg)
             return TaskResult(success=False, error=error_msg)
         except Exception as e:
             error_msg = str(e)
             if task_name:
                 self.set_error_info(task_name, error_msg)
             else:
-                Console().print(f"[bold red]Error:[/bold red] {error_msg}")
+                log_error(error_msg)
             return TaskResult(success=False, error=error_msg)
 
     def add_items_to_head(self, items) -> None:
@@ -811,18 +813,6 @@ class MultiTaskProgress:
             cmd=cmd,
             info_text="Stopping and removing containers with docker-compose down",
         )
-
-
-def bold(text: str) -> Text:
-    return Text(text, style="bold")
-
-
-def yellow(text: str, bold=False) -> Text:
-    return Text(text, style="bold yellow" if bold else "yellow")
-
-
-def green(text: str, bold=False) -> Text:
-    return Text(text, style="bold green" if bold else "green")
 
 
 def _count_files(dir_path: Path) -> int:

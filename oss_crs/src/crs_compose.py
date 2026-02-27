@@ -12,8 +12,13 @@ from .crs import CRS
 from .ui import MultiTaskProgress, TaskResult
 from .target import Target
 from .templates import renderer
-from .utils import TmpDockerCompose, normalize_run_id, generate_run_id, rm_with_docker
+from .utils import TmpDockerCompose, normalize_run_id, generate_run_id, rm_with_docker, log_success, log_warning, log_dim
 from .workdir import WorkDir
+from .cgroup import (
+    check_cgroup_parent_available,
+    create_run_cgroups,
+    cleanup_cgroup,
+)
 
 
 class CRSCompose:
@@ -394,6 +399,9 @@ class CRSCompose:
         run_id = normalize_run_id(run_id) if run_id else generate_run_id()
         sanitizer = sanitizer if sanitizer else self._get_sanitizer(target)
 
+        # Auto-detect cgroup-parent availability
+        cgroup_parent, _ = check_cgroup_parent_available()
+
         # Determine build_id: use provided, find latest, or generate new
         if build_id:
             build_id = normalize_run_id(build_id)
@@ -525,6 +533,7 @@ class CRSCompose:
             pov_files=pov_files,
             diff_path=diff,
             seed_dir=seed_dir,
+            cgroup_parent=cgroup_parent,
             bug_candidate=bug_candidate if bug_candidate else bug_candidate_dir,
         )
 
@@ -639,6 +648,7 @@ class CRSCompose:
         pov_files: list[Path] | None = None,
         diff_path: Optional[Path] = None,
         seed_dir: Optional[Path] = None,
+        cgroup_parent: bool = False,
         bug_candidate: Optional[Path] = None,
     ) -> bool:
         if self.crs_compose_env.run_env == RunEnv.LOCAL:
@@ -649,7 +659,8 @@ class CRSCompose:
                 sanitizer=sanitizer,
                 pov_files=pov_files or [],
                 diff_path=diff_path,
-                seed_dir=seed_dir,
+                seed_dir=seed_dir, 
+                cgroup_parent=cgroup_parent,
                 bug_candidate=bug_candidate,
             )
         else:
@@ -665,8 +676,24 @@ class CRSCompose:
         pov_files: list[Path] | None = None,
         diff_path: Optional[Path] = None,
         seed_dir: Optional[Path] = None,
+        cgroup_parent: bool = False,
         bug_candidate: Optional[Path] = None,
     ) -> bool:
+        # Create cgroups if cgroup_parent mode is enabled
+        worker_cgroup_path: Optional[Path] = None
+        cgroup_parents: Optional[dict[str, str]] = None
+
+        if cgroup_parent:
+            try:
+                worker_cgroup_path, cgroup_parents = create_run_cgroups(
+                    run_id, "run", self.crs_list
+                )
+                log_success(f"Created cgroups at: {worker_cgroup_path}")
+            except OSError as e:
+                log_warning(f"Failed to create cgroups: {e}")
+                log_warning("Falling back to per-container resource limits.")
+                cgroup_parents = None
+
         with MultiTaskProgress(
             tasks=[],
             title="CRS Compose Run",
@@ -709,6 +736,7 @@ class CRSCompose:
                             pov_files=pov_files or [],
                             diff_path=diff_path,
                             seed_dir=seed_dir,
+                            cgroup_parents=cgroup_parents,
                             bug_candidate=bug_candidate,
                         ),
                     ),
@@ -721,6 +749,13 @@ class CRSCompose:
                 ]
                 progress.add_tasks(tasks)
                 ret = progress.run_added_tasks()
+
+                # Cleanup cgroups after run
+                if worker_cgroup_path is not None:
+                    success, msg = cleanup_cgroup(worker_cgroup_path)
+                    if not success:
+                        log_dim(f"Note: Cgroup cleanup deferred: {msg}")
+
                 if ret.success or ret.interrupted:
                     self.__show_result_local(target, actual_run_id, sanitizer, progress)
                     return ret.success
@@ -910,6 +945,7 @@ class CRSCompose:
         pov_files: list[Path] | None = None,
         diff_path: Optional[Path] = None,
         seed_dir: Optional[Path] = None,
+        cgroup_parents: Optional[dict[str, str]] = None,
         bug_candidate: Optional[Path] = None,
     ) -> TaskResult:
         def prepare_docker_compose(progress: MultiTaskProgress) -> TaskResult:
@@ -921,6 +957,7 @@ class CRSCompose:
                 run_id,
                 build_id=build_id,
                 sanitizer=sanitizer,
+                cgroup_parents=cgroup_parents,
             )
             tmp_docker_compose.docker_compose.write_text(content)
             return TaskResult(success=True)

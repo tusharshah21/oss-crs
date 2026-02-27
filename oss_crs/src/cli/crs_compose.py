@@ -8,6 +8,9 @@ from ..crs_compose import CRSCompose
 from ..config.crs_compose import CRSComposeConfig
 from ..target import Target
 from .artifacts import handle_artifacts
+from ..utils import normalize_run_id
+from ..config.artifacts import ArtifactsOutput, CRSArtifacts, ExchangeDir
+from .setup import add_setup_command, handle_setup
 
 
 DEFAULT_WORK_DIR = (Path(__file__) / "../../../../.oss-crs-workdir").resolve()
@@ -282,10 +285,15 @@ def cli() -> bool:
     add_artifacts_command(subparsers)
     add_check_command(subparsers)
     add_gen_compose_command(subparsers)
+    add_setup_command(subparsers)
 
     argv = sys.argv[1:]
     _warn_deprecated_cli_aliases(argv)
     args = parser.parse_args(argv)
+
+    # Handle setup command early - it doesn't need compose file
+    if args.command == "setup":
+        return handle_setup(args)
 
     # Resolve all Path arguments to absolute paths so that relative paths
     # (e.g., --fuzz-proj-path ../ghostscript) work regardless of cwd.

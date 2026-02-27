@@ -85,9 +85,13 @@ services:
         condition: service_completed_successfully
 {%- endif %}
 {%- endif %}
+{%- if cgroup_parents and crs.name in cgroup_parents %}
+    # Using cgroup-parent mode: resources managed by parent cgroup
+    cgroup_parent: "{{ cgroup_parents[crs.name] }}"
+{%- else %}
     cpuset: "{{ crs.resource.cpuset }}"
-    # TODO: Check memory limit because it's for all services in a single CRS
     mem_limit: "{{ crs.resource.memory }}"
+{%- endif %}
     volumes:
       - {{ work_dir.get_build_output_dir(crs.name, target, build_id, sanitizer) }}:/OSS_CRS_BUILD_OUT_DIR:ro
       - {{ work_dir.get_submit_dir(crs.name, target, run_id, sanitizer) }}:/OSS_CRS_SUBMIT_DIR:rw

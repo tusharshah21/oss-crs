@@ -106,6 +106,10 @@ def render_build_target_docker_compose(
         "build_id": build_id,
         "crs_compose_env": crs.crs_compose_env.get_env(),
         "libCRS_path": str(LIBCRS_PATH),
+        "resource": {
+            "cpuset": crs.resource.cpuset if crs.resource else None,
+            "memory": crs.resource.memory if crs.resource else None,
+        },
         "build_fetch_dir": str(build_fetch_dir) if build_fetch_dir else None,
     }
     return render_template(template_path, context)
@@ -188,6 +192,7 @@ def render_run_crs_compose_docker_compose(
     run_id: str,
     build_id: str,
     sanitizer: str,
+    cgroup_parents: Optional[dict[str, str]] = None,
 ) -> str:
     template_path = CUR_DIR / "run-crs-compose.docker-compose.yaml.j2"
 
@@ -209,6 +214,7 @@ def render_run_crs_compose_docker_compose(
         "snapshot_image_tag": target.snapshot_image_tag or "",
         "resolve_dockerfile": _resolve_module_dockerfile,
         "exchange_dir": exchange_dir,
+        "cgroup_parents": cgroup_parents,  # Dict mapping CRS name to cgroup_parent path
     }
 
     llm_context = prepare_llm_context(tmp_docker_compose, crs_compose)
