@@ -112,6 +112,12 @@ supported_target:
 required_llms:
   - gpt-4.1
   - claude-sonnet-4-20250514
+
+# Only needed if your CRS requires specific directed inputs to function.
+# OSS-CRS will fail fast before spawning containers if these are missing.
+required_inputs:
+  - diff
+  - bug-candidate
 ```
 
 ### Configuration Fields
@@ -127,6 +133,7 @@ required_llms:
 | `crs_run_phase` | Dictionary of named modules (containers) that run at runtime |
 | `supported_target` | Languages, sanitizers, architectures, and modes your CRS supports |
 | `required_llms` | *(Optional)* Minimum required LLM model names your CRS needs (validation baseline) |
+| `required_inputs` | *(Optional)* Input channels the CRS requires (`diff`, `pov`, `seed`, `bug-candidate`). Validated before run. |
 
 For the complete schema reference, see [config/crs.md](config/crs.md).
 
@@ -824,6 +831,7 @@ Before publishing your CRS, verify:
 - [ ] Artifact directories are registered with `libCRS register-submit-dir`
 - [ ] `supported_target` accurately reflects your CRS capabilities
 - [ ] `required_llms` lists all models used (if any)
+- [ ] `required_inputs` lists inputs the CRS depends on (if any)
 - [ ] The CRS runs successfully against at least one OSS-Fuzz project
 
 **Additional checks for incremental builds:**
