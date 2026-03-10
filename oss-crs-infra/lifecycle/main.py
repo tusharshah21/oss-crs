@@ -3,6 +3,11 @@
 Monitors Docker container events for a set of Compose services and writes
 a ready signal to the exchange directory once every watched service has
 stopped.  This lets an ensemble CRS know that no more artifacts will arrive.
+
+NOTE: This implementation relies heavily on the Docker Engine API (container
+events via /var/run/docker.sock).  To support other platforms (e.g. Kubernetes),
+the monitoring logic can be rewritten against their native APIs (e.g. Pod watch)
+and selected at runtime via an environment variable such as LIFECYCLE_BACKEND.
 """
 
 import json
