@@ -67,7 +67,7 @@ services:
       timeout: 3s
       retries: 3
       start_period: 15s
-{%- elif crs.resource and not crs.resource.attach %}
+{%- elif bug_fix_ensemble and not crs.config.is_bug_fixing_ensemble and not crs.config.is_builder %}
     attach: false
 {%- endif %}
     networks:

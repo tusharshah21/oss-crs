@@ -51,16 +51,7 @@ class CRSCompose:
         if builder_count > 1:
             raise ValueError("At most one CRS entry with type 'builder' is allowed")
 
-        self._apply_patch_ensemble_auto_attach()
         self.deadline: Optional[float] = None
-
-    def _apply_patch_ensemble_auto_attach(self) -> None:
-        """When a patch-ensemble CRS is present, auto-set attach=false on other bug-fixing CRSes."""
-        has_ensemble = any(crs.config.is_bug_fixing_ensemble for crs in self.crs_list)
-        if has_ensemble:
-            for crs in self.crs_list:
-                if not crs.config.is_bug_fixing_ensemble and not crs.config.is_builder and crs.resource:
-                    crs.resource.attach = False
 
     @property
     def _builder_crs(self) -> Optional[CRS]:
