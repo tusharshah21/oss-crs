@@ -34,8 +34,6 @@ crs-codex:
 
 # --- CRS (crs-patch-ensemble) ----------------------------------------------
 crs-patch-ensemble:
-  source:
-    local_path: /home/cen/patch-ensemble/crs-patch-ensemble
   cpuset: "20-23"
   memory: "8G"
   llm_budget: 10
