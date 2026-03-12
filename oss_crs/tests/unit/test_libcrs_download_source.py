@@ -92,11 +92,11 @@ def test_download_source_repo_hint_under_src_uses_src_root(
     assert calls["dst"] == dst.resolve()
 
 
-def test_download_source_repo_falls_back_to_src_repo_when_hint_missing(
+def test_download_source_repo_falls_back_to_runtime_src_when_hint_missing(
     monkeypatch, tmp_path: Path
 ) -> None:
     src_root = tmp_path / "runtime-src"
-    repo = src_root / "repo"
+    repo = src_root / "nested" / "project"
     (repo / ".git").mkdir(parents=True)
     (repo / "file.txt").write_text("ok")
     dst = tmp_path / "dst"
@@ -119,12 +119,12 @@ def test_download_source_repo_falls_back_to_src_repo_when_hint_missing(
     assert calls["dst"] == dst.resolve()
 
 
-def test_download_source_repo_falls_back_to_build_output_src_repo(
+def test_download_source_repo_falls_back_to_build_output_src_when_hint_missing(
     monkeypatch, tmp_path: Path
 ) -> None:
     build_out_dir = tmp_path / "build-out"
-    repo = build_out_dir / "src" / "repo"
-    repo.mkdir(parents=True)
+    repo = build_out_dir / "src" / "nested" / "project"
+    (repo / ".git").mkdir(parents=True)
     (repo / "file.txt").write_text("ok")
     dst = tmp_path / "dst"
 
@@ -151,9 +151,9 @@ def test_download_source_repo_prefers_runtime_src_over_build_output(
     monkeypatch, tmp_path: Path
 ) -> None:
     src_root = tmp_path / "runtime-src"
-    (src_root / "repo" / ".git").mkdir(parents=True)
+    (src_root / "nested" / "runtime-project" / ".git").mkdir(parents=True)
     build_out_dir = tmp_path / "build-out"
-    (build_out_dir / "src" / "repo" / ".git").mkdir(parents=True)
+    (build_out_dir / "src" / "nested" / "build-project" / ".git").mkdir(parents=True)
     dst = tmp_path / "dst"
 
     monkeypatch.setenv("SRC", str(src_root))
@@ -181,7 +181,7 @@ def test_download_source_repo_skips_empty_runtime_src_and_uses_build_output(
     src_root = tmp_path / "runtime-src"
     src_root.mkdir()
     build_out_dir = tmp_path / "build-out"
-    (build_out_dir / "src" / "repo" / ".git").mkdir(parents=True)
+    (build_out_dir / "src" / "nested" / "build-project" / ".git").mkdir(parents=True)
     dst = tmp_path / "dst"
 
     monkeypatch.setenv("SRC", str(src_root))

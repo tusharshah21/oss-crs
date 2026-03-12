@@ -130,13 +130,12 @@ class LocalCRSUtils(CRSUtils):
         if not candidate.is_relative_to(source_root):
             return candidate if candidate.exists() else None
 
-        repo_dir = source_root / "repo"
-        if repo_dir.exists():
-            return source_root
-
         git_dir = next(source_root.rglob(".git"), None)
         if git_dir is not None:
             return source_root
+
+        if candidate != source_root:
+            return candidate if candidate.exists() else None
 
         return None
 
