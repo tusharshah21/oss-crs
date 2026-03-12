@@ -50,6 +50,7 @@ class CRSCompose:
         builder_count = sum(1 for crs in self.crs_list if crs.config.is_builder)
         if builder_count > 1:
             raise ValueError("At most one CRS entry with type 'builder' is allowed")
+
         self.deadline: Optional[float] = None
 
     @property
@@ -484,12 +485,9 @@ class CRSCompose:
             build_id = self.get_latest_build_id(target, sanitizer)
             # build_id may be None if no builds exist yet
 
-        diff_sha256: Optional[str] = None
         if diff is not None and not diff.is_file():
             print(f"Error: Diff file does not exist: {diff}")
             return False
-        if diff is not None:
-            diff_sha256 = hashlib.sha256(diff.read_bytes()).hexdigest()
         if bug_candidate is not None and bug_candidate_dir is not None:
             print("Error: --bug-candidate and --bug-candidate-dir are mutually exclusive.")
             return False
@@ -508,10 +506,6 @@ class CRSCompose:
         if bug_candidate_dir is not None and not bug_candidate_dir.is_dir():
             print("Error: --bug-candidate-dir must be a directory.")
             return False
-        bug_candidate_sha256 = self._hash_bug_candidate_input(
-            bug_candidate, bug_candidate_dir
-        )
-        input_sha256 = self._hash_directed_inputs(diff_sha256, bug_candidate_sha256)
         if seed_dir is not None and not seed_dir.is_dir():
             print(f"Error: Seed directory does not exist: {seed_dir}")
             return False
@@ -543,29 +537,6 @@ class CRSCompose:
             )
             if check.returncode != 0:
                 need_build = True
-
-        if input_sha256 is not None and build_id and not need_build:
-            metadata = self._read_build_metadata(target, build_id, sanitizer)
-            if metadata is None:
-                print(
-                    "Error: build metadata is missing for this build. "
-                    "Rebuild with directed inputs to run directed fuzzing safely."
-                )
-                return False
-            build_input_sha256 = metadata.get("input_sha256")
-            if not build_input_sha256:
-                build_input_sha256 = self._hash_directed_inputs(
-                    metadata.get("diff_sha256"),
-                    metadata.get("bug_candidate_sha256"),
-                )
-            if build_input_sha256 != input_sha256:
-                print(
-                    "Error: directed input set does not match the one used for the selected build.\n"
-                    f"  expected_input_sha256: {build_input_sha256}\n"
-                    f"  actual_input_sha256:   {input_sha256}\n"
-                    "Rebuild with the requested directed inputs or choose a matching build-id."
-                )
-                return False
 
         if need_build:
             # Generate new build_id if we don't have one
@@ -1147,7 +1118,7 @@ class CRSCompose:
         progress: MultiTaskProgress,
     ) -> TaskResult:
         ret = progress.docker_compose_up(
-            project_name, str(tmp_docker_compose.docker_compose)
+            project_name, tmp_docker_compose.docker_compose
         )
         if ret.success:
             return ret
