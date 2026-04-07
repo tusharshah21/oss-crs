@@ -169,8 +169,9 @@ def test_container_cleanup_on_failure(tmp_path):
     # Use ubuntu:22.04 to force failure at command execution (no oss_crs_handler.sh)
     result = run_ephemeral_build(
         base_image="ubuntu:22.04",
-        build_id="cleanup-test",
+        rebuild_id="cleanup-test",
         builder_name="integ-builder",
+        crs_name="integ-crs",
         patch_bytes=b"",
         rebuild_out_dir=tmp_path,
         timeout=10,
