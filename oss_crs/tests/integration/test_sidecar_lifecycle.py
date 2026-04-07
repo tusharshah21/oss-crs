@@ -44,13 +44,30 @@ pytestmark = [
     pytest.mark.skipif(not docker_available(), reason="Docker daemon not available"),
 ]
 
+# Lightweight image with bash (needed by run_ephemeral_build).
+# Pulled once per session via the _ensure_test_image fixture.
+_TEST_IMAGE = "ubuntu:24.04"
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _ensure_test_image():
+    """Pull the test base image once so individual tests don't fail on missing image."""
+    if not _DOCKER_AVAILABLE:
+        return
+    client = docker_lib.from_env()
+    try:
+        client.images.get(_TEST_IMAGE)
+    except docker_lib.errors.ImageNotFound:
+        repo, tag = _TEST_IMAGE.split(":")
+        client.images.pull(repo, tag=tag)
+
 
 def test_ephemeral_build_lifecycle(tmp_path):
     """TST-02: Full build container lifecycle — start, build, snapshot, cleanup."""
     from docker_ops import run_ephemeral_build
 
     client = docker_lib.from_env()
-    base_image = "ubuntu:22.04"
+    base_image = _TEST_IMAGE
     build_id = "integration-test-001"
     builder_name = "integ-builder"
     crs_name = "integ-crs"
@@ -90,7 +107,7 @@ def test_snapshot_creation_and_reuse(tmp_path):
     from docker_ops import run_ephemeral_build, get_build_image
 
     client = docker_lib.from_env()
-    base_image = "ubuntu:22.04"
+    base_image = _TEST_IMAGE
     build_id = "integration-snapshot-001"
     builder_name = "integ-builder"
     crs_name = "integ-crs"
@@ -148,7 +165,7 @@ def test_snapshot_tag_includes_crs_and_builder_name(tmp_path):
     builder_name = "my-custom-builder"
     crs_name = "my-crs"
     build_id = "tag-format-test"
-    base_image = "ubuntu:22.04"
+    base_image = _TEST_IMAGE
 
     # Without a snapshot, get_build_image returns base
     result = get_build_image(client, base_image, builder_name, crs_name)
@@ -166,9 +183,9 @@ def test_container_cleanup_on_failure(tmp_path):
     """TST-02: Container is removed even when build fails."""
     from docker_ops import run_ephemeral_build
 
-    # Use ubuntu:22.04 to force failure at command execution (no oss_crs_handler.sh)
+    # Use base image to force failure at command execution (no oss_crs_handler.sh)
     result = run_ephemeral_build(
-        base_image="ubuntu:22.04",
+        base_image=_TEST_IMAGE,
         rebuild_id="cleanup-test",
         builder_name="integ-builder",
         crs_name="integ-crs",
@@ -177,6 +194,6 @@ def test_container_cleanup_on_failure(tmp_path):
         timeout=10,
     )
 
-    # Build may fail (no oss_crs_handler.sh in ubuntu:22.04) but container should be cleaned
+    # Build may fail (no oss_crs_handler.sh in base image) but container should be cleaned
     # The exit code will be non-zero since the command doesn't exist
     assert "exit_code" in result
