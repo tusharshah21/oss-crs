@@ -14,8 +14,6 @@ target_build_phase:
 crs_run_phase:
   patcher:
     dockerfile: oss-crs/patcher.Dockerfile
-    additional_env:
-      BUILDER_MODULE: builder-sidecar
 
 supported_target:
   mode:

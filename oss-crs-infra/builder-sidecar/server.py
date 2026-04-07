@@ -88,7 +88,7 @@ def health():
 async def submit_build(
     patch: UploadFile = File(...),
     crs_name: str = Form(...),
-    builder_name: str = Form(...),
+    builder_name: str = Form(""),
     rebuild_id: int = Form(None),
     cpuset: str = Form(""),
     mem_limit: str = Form(""),

@@ -39,7 +39,9 @@ builder-sidecar-lite:
 _compose_tmpdir = tempfile.mkdtemp(prefix="verify-patch-")
 COMPOSE = Path(_compose_tmpdir) / "compose.yaml"
 COMPOSE.write_text(COMPOSE_CONTENT)
-atexit.register(lambda: __import__("shutil").rmtree(_compose_tmpdir, ignore_errors=True))
+atexit.register(
+    lambda: __import__("shutil").rmtree(_compose_tmpdir, ignore_errors=True)
+)
 
 # Set to None to run all, or list specific benchmark names to filter.
 # SELECTED_BENCHMARKS = None
@@ -84,13 +86,25 @@ def get_artifacts(proj: Path, harness: str, build_id: str) -> dict | None:
     """Fetch full artifacts dict via oss-crs artifacts."""
     try:
         result = subprocess.run(
-            ["uv", "run", "oss-crs", "artifacts",
-             "--compose-file", str(COMPOSE),
-             "--fuzz-proj-path", str(proj),
-             "--target-harness", harness,
-             "--build-id", build_id,
-             "--run-id", build_id],
-            capture_output=True, text=True, timeout=30,
+            [
+                "uv",
+                "run",
+                "oss-crs",
+                "artifacts",
+                "--compose-file",
+                str(COMPOSE),
+                "--fuzz-proj-path",
+                str(proj),
+                "--target-harness",
+                harness,
+                "--build-id",
+                build_id,
+                "--run-id",
+                build_id,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
             cwd=str(PROJECT_ROOT),
         )
         if result.returncode != 0:
@@ -113,9 +127,16 @@ def get_timing_from_artifacts(artifacts: dict) -> dict | None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run verify-patch against CRSBench benchmarks")
-    parser.add_argument("-n", "--limit", type=int, default=0,
-                        help="Max benchmarks to run (0 = all, default: all)")
+    parser = argparse.ArgumentParser(
+        description="Run verify-patch against CRSBench benchmarks"
+    )
+    parser.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        default=0,
+        help="Max benchmarks to run (0 = all, default: all)",
+    )
     args = parser.parse_args()
 
     if not BENCHMARKS_DIR.is_dir():
@@ -124,9 +145,11 @@ def main():
 
     targets = list(discover_targets(BENCHMARKS_DIR))
     if SELECTED_BENCHMARKS is not None:
-        targets = [(p, h, d, pv) for p, h, d, pv in targets if p.name in SELECTED_BENCHMARKS]
+        targets = [
+            (p, h, d, pv) for p, h, d, pv in targets if p.name in SELECTED_BENCHMARKS
+        ]
     if args.limit > 0:
-        targets = targets[:args.limit]
+        targets = targets[: args.limit]
     print(f"Running {len(targets)} benchmarks\n")
 
     results = []
@@ -135,9 +158,9 @@ def main():
     for proj, harness, diff, pov_dir in targets:
         name = proj.name
         build_id = f"vp-{name}"
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"  {name} | {harness}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         rc = subprocess.run(
             [str(SCRIPT), str(proj), harness, str(diff), str(pov_dir), str(COMPOSE)],
@@ -156,7 +179,9 @@ def main():
                 test_s = timing.get("test", 0)
                 print(f"\n  Timing: rebuild={rebuild_s:.1f}s  test={test_s:.1f}s")
 
-            crs_data = list(artifacts["crs"].values())[0] if artifacts.get("crs") else {}
+            crs_data = (
+                list(artifacts["crs"].values())[0] if artifacts.get("crs") else {}
+            )
             log_paths = {}
             if crs_data.get("log_dir"):
                 log_paths["crs_log_dir"] = crs_data["log_dir"]
@@ -175,28 +200,30 @@ def main():
         results.append((name, harness, status))
         print(f"  -> {status}\n")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     passed = sum(1 for _, _, s in results if s == "PASS")
     for name, harness, status in results:
         t = all_timings.get(name)
         timing_str = ""
         if t:
-            timing_str = f"  rebuild={t.get('rebuild',0):.1f}s test={t.get('test',0):.1f}s"
+            timing_str = (
+                f"  rebuild={t.get('rebuild', 0):.1f}s test={t.get('test', 0):.1f}s"
+            )
         print(f"  {status}  {name} ({harness}){timing_str}")
     print(f"\n  {passed}/{len(results)} passed")
 
     if all_timings:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("  ALL TIMINGS (JSON)")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(json.dumps(all_timings, indent=2))
 
     if all_logs:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("  LOG PATHS")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for name, paths in all_logs.items():
             print(f"\n  {name}:")
             for key, path in paths.items():
