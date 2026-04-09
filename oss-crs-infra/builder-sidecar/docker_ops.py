@@ -47,8 +47,16 @@ _OSS_FUZZ_ENV_KEYS = ("FUZZING_ENGINE", "SANITIZER", "ARCHITECTURE", "FUZZING_LA
 
 
 def _oss_fuzz_env() -> dict[str, str]:
-    """Forward OSS-Fuzz env vars from the sidecar into ephemeral containers."""
-    return {k: v for k in _OSS_FUZZ_ENV_KEYS if (v := os.environ.get(k)) is not None}
+    """Forward OSS-Fuzz env vars and additional passthrough keys to ephemeral containers."""
+    result = {k: v for k in _OSS_FUZZ_ENV_KEYS if (v := os.environ.get(k)) is not None}
+    # Forward additional keys specified by SIDECAR_PASSTHROUGH_KEYS (comma-separated)
+    passthrough = os.environ.get("SIDECAR_PASSTHROUGH_KEYS", "")
+    if passthrough:
+        for key in passthrough.split(","):
+            key = key.strip()
+            if key and (val := os.environ.get(key)) is not None:
+                result[key] = val
+    return result
 
 
 def _incremental_build_enabled() -> bool:
