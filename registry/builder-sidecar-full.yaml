@@ -1,0 +1,5 @@
+name: builder-sidecar-full
+type:
+  - bug-fixing
+source:
+  local_path: oss-crs/oss_crs/tests/integration/fixtures/builder-sidecar-full
