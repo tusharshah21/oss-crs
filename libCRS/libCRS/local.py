@@ -387,7 +387,8 @@ class LocalCRSUtils(CRSUtils):
                 "cpuset": cpuset,
                 "mem_limit": mem_limit,
             }
-            result = self._submit_and_poll("/test", builder, files, data, timeout=600)
+            test_timeout = int(os.environ.get("OSS_CRS_TEST_TIMEOUT", "1200"))
+            result = self._submit_and_poll("/test", builder, files, data, timeout=test_timeout)
 
         response_dir.mkdir(parents=True, exist_ok=True)
         if result is None:
