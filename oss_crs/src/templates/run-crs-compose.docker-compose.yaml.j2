@@ -243,6 +243,11 @@ services:
     restart: on-failure:3
     volumes:
       - {{ rebuild_out_dir }}:/out:rw
+{%- for crs in crs_list %}
+      - {{ work_dir.get_build_output_dir(crs.name, target, build_id, sanitizer) }}:/build_out/{{ crs.name }}:ro
+{%- endfor %}
+    environment:
+      - BUILD_OUT_DIR=/build_out
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\""]
       interval: 5s

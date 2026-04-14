@@ -160,7 +160,7 @@ class CRSUtils(ABC):
         Args:
             pov_path: Path to the POV binary file.
             harness_name: Harness binary name in /out/.
-            rebuild_id: Rebuild ID. None or "base" runs against the original unpatched build.
+            rebuild_id: Rebuild ID. None runs against the original unpatched build.
             response_dir: Directory to receive results:
                 - retcode, stdout.log, stderr.log
             builder: Runner sidecar module name. Defaults to RUNNER_MODULE env var or "runner-sidecar".

@@ -326,7 +326,7 @@ class LocalCRSUtils(CRSUtils):
         runner_url = self._get_service_url(builder)
         data = {
             "harness_name": harness_name,
-            "rebuild_id": rebuild_id or "base",
+            "rebuild_id": rebuild_id or "OSS_CRS_BASE",
             "crs_name": crs_name,
         }
         try:
