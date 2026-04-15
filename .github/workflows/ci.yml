@@ -10,10 +10,7 @@ on:
       - "libCRS/**"
       - "uv.lock"
       - "pyproject.toml"
-
-env:
-  RUFF_PATHS: oss_crs oss-crs-infra libCRS
-  PYRIGHT_PATHS: oss_crs/src libCRS/libCRS oss-crs-infra
+      - "!**/*.md"
 
 jobs:
   verify:
@@ -25,14 +22,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen --dev
-      - name: Ruff check
-        run: uv run ruff check $RUFF_PATHS
-      - name: Ruff format
-        run: uv run ruff format --check $RUFF_PATHS
-      - name: Pyright
-        run: uv run pyright $PYRIGHT_PATHS
-      - name: Unit Tests
-        run: uv run pytest -m "not integration" -v oss_crs
+      - name: Verify
+        run: uv run verify
 
   integration-test:
     name: Integration tests
@@ -255,7 +246,8 @@ jobs:
             echo "Found patches:"
             ls -la "$patch_dir"
           else
-            echo "WARNING: No patches found (may be expected if LLM could not fix)"
+            echo "ERROR: No patches found"
+            exit 1
           fi
 
       - name: Create smoke-c-patch workdir tarball

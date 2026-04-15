@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""Patch verification test:
+  1. Run all POVs on original build → all should crash
+  2. Fetch diff and rebuild with patch
+  3. Run all POVs on patched build → none should crash
+  4. Run functionality tests → pass expected
+
+A structured result is always written to OSS_CRS_LOG_DIR/verify_patch_timing.json
+(even on failure) via an atexit hook, so consumers can rely on its presence.
+The diff is provided via `oss-crs run --diff <patch>` and arrives in
+OSS_CRS_FETCH_DIR/diffs/ — no hardcoded COPY needed.
+"""
+
+import atexit
+import hashlib
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+from libCRS.base import DataType
+from libCRS.local import LocalCRSUtils
+
+
+RESPONSE_DIR = Path("/tmp/response")
+
+# Max bytes of stderr/stdout kept inline in verify_patch_timing.json. The full
+# content is always persisted to OSS_CRS_LOG_DIR on failure so truncation here
+# only affects the inline summary, not diagnosability. 8 KiB is large enough to
+# capture typical ASan/jazzer reports while keeping the JSON manageable.
+_DEFAULT_INLINE_TAIL_BYTES = 8192
+INLINE_TAIL_BYTES = int(
+    os.environ.get("OSS_CRS_VERIFY_INLINE_TAIL_BYTES", _DEFAULT_INLINE_TAIL_BYTES)
+)
+
+
+# --- Result accumulator -------------------------------------------------
+# Initialized with "error" so that an unexpected crash (unhandled exception,
+# SIGKILL before we reach the success path, etc.) still surfaces as a failed
+# verification rather than a missing file.
+_result: dict = {
+    "status": "error",
+    "reason": "verify_patch exited unexpectedly",
+    "failed_step": None,
+    "steps": {},
+    # Backward-compat top-level timings kept for existing consumers that
+    # read `rebuild` / `test` directly.
+    "rebuild": 0.0,
+    "test": 0.0,
+}
+
+
+def _write_result() -> None:
+    log_dir = os.environ.get("OSS_CRS_LOG_DIR", "")
+    if not log_dir:
+        return
+    try:
+        timing_path = Path(log_dir) / "verify_patch_timing.json"
+        timing_path.parent.mkdir(parents=True, exist_ok=True)
+        timing_path.write_text(json.dumps(_result, indent=2) + "\n")
+        log(f"Result written to {timing_path}")
+    except Exception as exc:
+        log(f"Failed to write result file: {exc}")
+
+
+atexit.register(_write_result)
+
+
+def log(msg: str):
+    print(f"[verify-patch] {msg}", flush=True)
+
+
+def _mark_step(name: str, status: str, **extra) -> None:
+    entry = {"status": status}
+    entry.update(extra)
+    _result["steps"][name] = entry
+
+
+def _archive_full_log(src: Path, dest_name: str) -> "str | None":
+    """Copy a response-dir log file into OSS_CRS_LOG_DIR for post-mortem.
+
+    Returns the archived path (string) on success, or None if the log is
+    missing or OSS_CRS_LOG_DIR is unavailable. Called from failure paths so
+    the full (untruncated) stderr/stdout survives alongside the structured
+    verify_patch_timing.json.
+    """
+    log_dir = os.environ.get("OSS_CRS_LOG_DIR", "")
+    if not log_dir or not src.exists():
+        return None
+    try:
+        dest = Path(log_dir) / dest_name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src.read_bytes())
+        return str(dest)
+    except Exception as exc:
+        log(f"Failed to archive {src} -> {dest_name}: {exc}")
+        return None
+
+
+def _tail_text(path: Path, nbytes: int) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(errors="replace").strip()[-nbytes:]
+    except Exception as exc:
+        return f"<failed to read {path}: {exc}>"
+
+
+def fail(step: str, reason: str) -> None:
+    """Record a failure for ``step`` and exit with non-zero status.
+
+    The atexit hook will persist ``_result`` before the process dies.
+    """
+    _result["status"] = "fail"
+    _result["reason"] = reason
+    _result["failed_step"] = step
+    _mark_step(step, "fail", reason=reason)
+    log(f"FAIL [{step}]: {reason}")
+    sys.exit(1)
+
+
+def timed(label: str):
+    """Context manager that records wall-clock seconds."""
+    class Timer:
+        def __init__(self):
+            self.elapsed = 0.0
+        def __enter__(self):
+            self._start = time.monotonic()
+            return self
+        def __exit__(self, *_):
+            self.elapsed = time.monotonic() - self._start
+            log(f"  [{label}] {self.elapsed:.1f}s")
+    return Timer()
+
+
+def main() -> int:
+    crs = LocalCRSUtils()
+
+    harness = os.environ.get("OSS_CRS_TARGET_HARNESS", "")
+    fetch_dir = os.environ.get("OSS_CRS_FETCH_DIR", "")
+    if not harness:
+        fail("environment", "OSS_CRS_TARGET_HARNESS not set")
+    if not fetch_dir:
+        fail("environment", "OSS_CRS_FETCH_DIR not set")
+
+    # --- Discover all POVs ---
+    pov_dir = Path(fetch_dir) / "povs"
+    if not pov_dir.is_dir():
+        fail("discover_povs", f"POV directory {pov_dir} does not exist")
+    pov_files = sorted(f for f in pov_dir.iterdir() if f.is_file())
+    if not pov_files:
+        fail("discover_povs", f"No POV files in {pov_dir}")
+    log(f"Found {len(pov_files)} POV(s): {[f.name for f in pov_files]}")
+    _mark_step("discover_povs", "pass", count=len(pov_files))
+
+    # --- Step 1: Download build-target artifacts + run all POVs (expect crash) ---
+    log("Step 1: Downloading build artifacts and running POVs on original build...")
+    build_dir = Path("/tmp/build-artifacts")
+    crs.download_build_output("build", build_dir)
+
+    harness_bin = build_dir / harness
+    if not harness_bin.exists():
+        fail("download_original_build", f"Harness {harness} not found in build artifacts")
+    harness_bin.chmod(0o755)
+    _mark_step("download_original_build", "pass")
+
+    for pov_file in pov_files:
+        pov_resp = RESPONSE_DIR / f"pov-before-{pov_file.stem}"
+        rc = crs.run_pov(pov_file, harness, pov_resp)
+        if rc == 0:
+            fail(
+                "run_povs_original",
+                f"POV {pov_file.name} did NOT crash on original build — expected a crash",
+            )
+        log(f"  {pov_file.name}: crashes (exit={rc})")
+    log(f"PASS: All {len(pov_files)} POV(s) crash on original build")
+    _mark_step("run_povs_original", "pass", pov_count=len(pov_files))
+
+    # --- Step 2: Fetch diff and rebuild ---
+    log("Step 2: Fetching diff and rebuilding with patch...")
+    diff_dir = Path("/tmp/fetched-diffs")
+    diff_dir.mkdir(parents=True, exist_ok=True)
+    crs.fetch(DataType.DIFF, diff_dir)
+
+    diffs = sorted(f for f in diff_dir.iterdir() if f.is_file())
+    if not diffs:
+        fail("fetch_diff", "No diff files fetched from FETCH_DIR")
+    patch = diffs[0]
+    log(f"Using patch: {patch.name} ({patch.stat().st_size} bytes)")
+    _mark_step("fetch_diff", "pass", patch=patch.name, bytes=patch.stat().st_size)
+
+    patched_resp = RESPONSE_DIR / "build-patched"
+    with timed("rebuild") as t_rebuild:
+        rc = crs.apply_patch_build(patch, patched_resp, builder_name="default-build")
+    _result["rebuild"] = t_rebuild.elapsed
+    if rc != 0:
+        build_stderr = patched_resp / "stderr.log"
+        build_stdout = patched_resp / "stdout.log"
+        stderr_tail = _tail_text(build_stderr, INLINE_TAIL_BYTES)
+        if stderr_tail:
+            log(f"  build stderr (last {INLINE_TAIL_BYTES}): {stderr_tail}")
+        archived_stderr = _archive_full_log(build_stderr, "apply_patch_build.stderr.log")
+        archived_stdout = _archive_full_log(build_stdout, "apply_patch_build.stdout.log")
+        if archived_stderr:
+            log(f"  full build stderr archived to {archived_stderr}")
+        _mark_step(
+            "apply_patch_build",
+            "fail",
+            duration=t_rebuild.elapsed,
+            exit_code=rc,
+            stderr_tail=stderr_tail,
+            stderr_full_path=archived_stderr,
+            stdout_full_path=archived_stdout,
+        )
+        fail("apply_patch_build", f"Patched build failed (exit={rc})")
+    patched_rid = int((patched_resp / "rebuild_id").read_text().strip())
+    log(f"Patched rebuild ID: {patched_rid}")
+    _mark_step(
+        "apply_patch_build",
+        "pass",
+        duration=t_rebuild.elapsed,
+        rebuild_id=patched_rid,
+    )
+
+    # --- Sanity check: verify rebuilt binary differs from original ---
+    log("Downloading rebuilt artifacts to compare...")
+    rebuilt_dir = Path("/tmp/rebuilt-artifacts")
+    crs.download_build_output("build", rebuilt_dir, rebuild_id=patched_rid)
+
+    rebuilt_bin = rebuilt_dir / harness
+    if not rebuilt_bin.exists():
+        fail(
+            "download_rebuilt_build",
+            f"Rebuilt harness {harness} not found in rebuild artifacts",
+        )
+
+    orig_hash = hashlib.sha256(harness_bin.read_bytes()).hexdigest()
+    rebuilt_hash = hashlib.sha256(rebuilt_bin.read_bytes()).hexdigest()
+    log(f"Original binary: {orig_hash[:16]}... ({harness_bin.stat().st_size} bytes)")
+    log(f"Rebuilt binary:  {rebuilt_hash[:16]}... ({rebuilt_bin.stat().st_size} bytes)")
+    binary_identical = orig_hash == rebuilt_hash
+    if binary_identical:
+        log("WARNING: Rebuilt binary is identical to original — patch may not have affected compilation")
+    _mark_step(
+        "download_rebuilt_build",
+        "pass",
+        binary_identical=binary_identical,
+    )
+
+    # --- Step 3: Run all POVs on patched build (expect NO crash) ---
+    log("Step 3: Running POVs on patched build...")
+    still_crash = []
+    for pov_file in pov_files:
+        pov_resp = RESPONSE_DIR / f"pov-after-{pov_file.stem}"
+        rc = crs.run_pov(pov_file, harness, pov_resp, patched_rid)
+        if rc != 0:
+            stderr_log = pov_resp / "stderr.log"
+            stdout_log = pov_resp / "stdout.log"
+            stderr_tail = _tail_text(stderr_log, INLINE_TAIL_BYTES)
+            if stderr_tail:
+                log(f"  {pov_file.name} stderr (last {INLINE_TAIL_BYTES}): {stderr_tail}")
+            archived_stderr = _archive_full_log(
+                stderr_log, f"run_povs_patched.{pov_file.stem}.stderr.log"
+            )
+            archived_stdout = _archive_full_log(
+                stdout_log, f"run_povs_patched.{pov_file.stem}.stdout.log"
+            )
+            if archived_stderr:
+                log(f"  {pov_file.name} full stderr archived to {archived_stderr}")
+            log(f"  {pov_file.name}: STILL CRASHES (exit={rc})")
+            still_crash.append(
+                {
+                    "pov": pov_file.name,
+                    "exit": rc,
+                    "stderr_tail": stderr_tail,
+                    "stderr_full_path": archived_stderr,
+                    "stdout_full_path": archived_stdout,
+                }
+            )
+        else:
+            log(f"  {pov_file.name}: fixed (no crash)")
+    if still_crash:
+        _mark_step("run_povs_patched", "fail", still_crash=still_crash)
+        fail(
+            "run_povs_patched",
+            f"Some POVs still crash after patch ({len(still_crash)}/{len(pov_files)})",
+        )
+    log(f"PASS: All {len(pov_files)} POV(s) no longer crash after patch")
+    _mark_step("run_povs_patched", "pass", pov_count=len(pov_files))
+
+    # --- Step 4: Run functionality tests ---
+    log("Step 4: Running functionality tests...")
+    test_resp = RESPONSE_DIR / "test"
+    with timed("test") as t_test:
+        rc = crs.apply_patch_test(patch, test_resp)
+    _result["test"] = t_test.elapsed
+    if rc != 0:
+        test_stderr = test_resp / "stderr.log"
+        test_stdout = test_resp / "stdout.log"
+        stderr_tail = _tail_text(test_stderr, INLINE_TAIL_BYTES)
+        if stderr_tail:
+            log(f"  test stderr (last {INLINE_TAIL_BYTES}): {stderr_tail}")
+        archived_stderr = _archive_full_log(test_stderr, "apply_patch_test.stderr.log")
+        archived_stdout = _archive_full_log(test_stdout, "apply_patch_test.stdout.log")
+        if archived_stderr:
+            log(f"  full test stderr archived to {archived_stderr}")
+        _mark_step(
+            "apply_patch_test",
+            "fail",
+            duration=t_test.elapsed,
+            exit_code=rc,
+            stderr_tail=stderr_tail,
+            stderr_full_path=archived_stderr,
+            stdout_full_path=archived_stdout,
+        )
+        fail("apply_patch_test", f"Tests failed (exit={rc})")
+    _mark_step("apply_patch_test", "pass", duration=t_test.elapsed)
+    log("PASS: Functionality tests pass")
+
+    # --- All steps passed ---
+    _result["status"] = "pass"
+    _result["reason"] = None
+    _result["failed_step"] = None
+    log("SUCCESS: patch verified — crash fixed, tests pass")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
