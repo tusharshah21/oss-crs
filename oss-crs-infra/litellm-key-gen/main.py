@@ -4,13 +4,10 @@ import yaml
 import requests
 
 
-def _read_secret(path: str) -> str | None:
+def _read_secret(path: str) -> str:
     """Read a Docker secret file."""
-    try:
-        with open(path) as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return None
+    with open(path) as f:
+        return f.read().strip()
 
 
 LITELLM_MASTER_KEY = _read_secret("/run/secrets/litellm_master_key")
